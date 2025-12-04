@@ -236,7 +236,7 @@ Later steps in the project can define TypeScript interfaces for this JSON shape 
 
 ---
 
-## 2. Step 2 – Enrich Keywords with Search Volume (DataForSEO) & Store in Supabase
+## 2. Step 2 – Enrich Keywords with Search Volume (DataForSEO)
 
 ### 2.1 Source of Keywords
 
@@ -299,7 +299,7 @@ type KeywordCategoryMap = Record<string, KeywordCategoryInfo>;
     - `segment_name = <segment_name from JSON>`
 - For other paths, set `segment_name = null`.
 
-This mapping will later be used to fill the category columns in Supabase.
+This mapping will later be used to keep category info attached to each keyword record.
 
 1. **Deduplicate** keywords:
     - If the same keyword appears in multiple places, keep **one keyword** in the flat list but **preserve all relevant category mappings if needed**.
@@ -537,7 +537,7 @@ For each keyword result:
 
 ### 2.4.3 Shape of enriched keyword object
 
-You can shape each record to match the Supabase columns:
+Define an enriched keyword shape for the search-volume output:
 
 ```tsx
 interface EnrichedKeywordRecord {
@@ -575,52 +575,7 @@ Then:
 1. Save this enriched array as **File 03** in the project folder, e.g.:
     - `./output/<projectId>/03-keywords-enriched-with-search-volume.json`.
 
----
-
-### 2.5 Insert Enriched Keywords into Supabase
-
-Use Supabase to store enriched keyword data.
-
-Supabase table structure:
-
-| Column | Type |
-| --- | --- |
-| `id` | `bigint` |
-| `created_at` | `timestamptz` |
-| `updated_at` | `timestamptz` |
-| `keyword` | `text` |
-| `projectid` | `text` |
-| `api_job_id` | `text` |
-| `spell` | `text` |
-| `location_code` | `int4` |
-| `language_code` | `text` |
-| `search_partners` | `bool` |
-| `competition` | `text` |
-| `competition_index` | `int4` |
-| `search_volume` | `int4` |
-| `avg_monthly_searches` | `float8` |
-| `low_top_of_page_bid` | `float4` |
-| `high_top_of_page_bid` | `float4` |
-| `cpc` | `float4` |
-| `category_level_1` | `text` |
-| `category_level_2` | `text` |
-| `segment_name` | `text` |
-| `monthly_searches` | `jsonb` |
-
-Mapping from `EnrichedKeywordRecord` to Supabase row is **one-to-one**, with:
-
-- `id, created_at, updated_at` handled by Supabase defaults.
-- All other fields passed from code.
-
-Implementation notes:
-
-- Use the official Supabase JS client in TypeScript.
-- For bulk insert, use `insert(enrichedKeywordArray)` in batches (e.g. 100–500 rows per call).
-- Use progress logging + progress bar when inserting many rows.
-
----
-
-### 2.6 Filter by Average Monthly Searches ≥ 100 (File 04)
+### 2.5 Filter by Average Monthly Searches ≥ 100 (File 04)
 
 After the enriched data is generated and stored:
 
@@ -1462,526 +1417,220 @@ Also log to terminal:
 
 ---
 
-## 6. Step 6 – Sync with Supabase & Backfill Missing Keywords / CPC
+## Step 6 – Build Keyword Scoring JSON
 
-### 6.1 Inputs
+From JSON file **index 07**, extract the keyword information and create a new JSON file **index 08**.
 
-For this step, we assume:
+### 1. Extract core metrics
 
-- `projectId` (string), e.g. `"20251202-10-001"`.
-- Final combined keyword JSON from Step 5, e.g.:
-    
-    `./output/<projectId>/07-all-keywords-combined-deduped.json`
-    
-    This file contains all unique keywords from:
-    
-    1. Original OpenAI group
-    2. SERP / PAA group
-    3. Keywords-for-site group
+For all keywords, extract these three fields:
 
-Each record should be in a unified shape similar to:
+- `avg_monthly_searches` (or `search_volume`)
+- `cpc`
+- `competition_index`
 
-```tsx
-interface UnifiedKeywordRecord {
-  keyword: string;
-  projectid: string;
-  api_job_id: string | null;
-  spell: string | null;
-  location_code: number | null;
-  language_code: string | null;
-  search_partners: boolean | null;
-  competition: string | null;
-  competition_index: number | null;
-  search_volume: number | null;
-  avg_monthly_searches: number | null;
-  low_top_of_page_bid: number | null;
-  high_top_of_page_bid: number | null;
-  cpc: number | null;
-  monthly_searches: MonthlySearchEntry[] | null;
+These will be used to build:
 
-  category_level_1?: string | null;
-  category_level_2?: string | null;
-  segment_name?: string | null;
-}
+- `volume_score`
+- `cost_score`
+- `difficulty_score`
+- `ads_score`
+- `tier`
+- `paid_flag`
+- `seo_flag`
+
+---
+
+### 2. Compute percentiles and clip extreme values
+
+For each metric (**volume, CPC, competition_index**):
+
+1. Collect all values across all keywords.
+2. Compute:
+    - `P5` (5th percentile)
+    - `P95` (95th percentile)
+3. For every keyword, **clip** the raw value into the [P5, P95] range:
+
+```
+clipped_x = min( max(x, P5), P95 )
+
+```
+
+Do this separately for:
+
+- `volume_clipped`
+- `cpc_clipped`
+- `competition_clipped`
+
+This step removes extreme outliers so they don’t distort the scoring.
+
+---
+
+### 3. Normalise each metric to 0–1
+
+Now convert each clipped metric into a 0–1 score.
+
+### 3.1 Volume score (higher volume = better)
+
+Use the clipped volume and the P5/P95 used above:
+
+```
+volume_score = (volume_clipped - P5_volume) / (P95_volume - P5_volume)
+
+```
+
+- Result range: **0–1**
+- Higher = more search demand
+
+### 3.2 Cost score (lower CPC = better)
+
+First normalise CPC:
+
+```
+cpc_norm = (cpc_clipped - P5_cpc) / (P95_cpc - P5_cpc)
+
+```
+
+Then invert it so that **lower CPC becomes higher score**:
+
+```
+cost_score = 1 - cpc_norm
+
+```
+
+- Result range: **0–1**
+- Higher = cheaper / more cost-efficient
+
+### 3.3 Difficulty score (lower competition = better)
+
+Same idea for `competition_index`:
+
+```
+competition_norm = (competition_clipped - P5_comp) / (P95_comp - P5_comp)
+difficulty_score = 1 - competition_norm
+
+```
+
+- Result range: **0–1**
+- Higher = easier to win (less competition)
+
+At this point all three scores are between **0 and 1**, where **higher always means “better”**.
+
+---
+
+### 4. Calculate the Ads Priority Score
+
+Combine the three metric scores into a single **Ads Priority Score**:
+
+```
+ads_score =
+  0.5 * volume_score   +   // Volume is most important
+  0.3 * cost_score     +   // Cost must not be too high
+  0.2 * difficulty_score   // Too hard to win gets lower weight
+
+```
+
+This gives one `ads_score` per keyword, also between roughly 0 and 1.
+
+---
+
+### 5. Define Tiers (A / B / C)
+
+You can either:
+
+- Use **fixed thresholds** (simple V1), or
+- Use **percentiles** (P20 / P50 / P80) on `ads_score` to adapt to each dataset.
+
+### Option A – Fixed thresholds (Switchable parameter)
+
+```
+Tier A (primary Ad keywords)
+ads_score >= 0.75
+
+Tier B (test / secondary Ad Group)
+0.5 <= ads_score < 0.75
+
+Tier C (long tail / observe only)
+ads_score < 0.5
+
+```
+
+### Option B – Percentile-based tiers (Default Choice)
+
+1. Compute:
+    - `P80_ads` = 80th percentile of `ads_score`
+    - `P50_ads` = 50th percentile (median)
+2. Then:
+
+```
+Tier A: ads_score >= P80_ads
+Tier B: P50_ads <= ads_score < P80_ads
+Tier C: ads_score < P50_ads
+
+```
+
+This way, Tier A is always roughly the **top 20%** of keywords in this project.
+
+---
+
+### 6. Define Paid / SEO flags
+
+After you have `volume_score`, `cost_score`, and `difficulty_score`, you can label each keyword as more suitable for **Paid Ads**, **SEO**, or both.
+
+### 6.1 Paid flag
+
+Keywords that are good for Ads usually have:
+
+- Decent or high volume
+- Cost not too high
+- Competition not insanely tough
+
+```
+paid_flag =
+  volume_score      >= 0.5 AND
+  cost_score        >= 0.3 AND
+  difficulty_score  >= 0.3
+
+```
+
+If this condition is `true`, the keyword is considered **suitable for Google Ads**.
+
+### 6.2 SEO flag
+
+SEO-first keywords typically:
+
+- Have okay volume
+- Are relatively expensive or competitive in Ads
+- Make more sense to target with content than to buy every click
+
+```
+seo_flag =
+  volume_score      >= 0.3 AND
+  cost_score        <= 0.5 AND   // More expensive / less cost-efficient
+  difficulty_score  <= 0.6       // Not super easy to win with Ads
 
 ```
 
 ---
 
-### 6.2 Pull All Project Keywords from Supabase & Snapshot to JSON
-
-1. Use Supabase client to query all rows in the `keywords` table for the current `projectId`:
-    
-    ```tsx
-    const { data: dbKeywords, error } = await supabase
-      .from("keywords")
-      .select("*")
-      .eq("projectid", projectId);
-    
-    ```
-    
-2. Save this result as a JSON snapshot, e.g.:
-    - `./output/<projectId>/08-supabase-keywords-snapshot.json`
-    
-    This acts as a “before update” reference.
-    
-3. Shape example of each row (from Supabase):
-    
-    ```tsx
-    interface SupabaseKeywordRow {
-      id: number;
-      created_at: string;
-      updated_at: string | null;
-      keyword: string;
-      projectid: string;
-      api_job_id: string | null;
-      spell: string | null;
-      location_code: number | null;
-      language_code: string | null;
-      search_partners: boolean | null;
-      competition: string | null;
-      competition_index: number | null;
-      search_volume: number | null;
-      avg_monthly_searches: number | null;
-      low_top_of_page_bid: number | null;
-      high_top_of_page_bid: number | null;
-      cpc: number | null;
-      category_level_1: string | null;
-      category_level_2: string | null;
-      segment_name: string | null;
-      monthly_searches: any | null; // jsonb
-    }
-    
-    ```
-    
-
----
-
-### 6.3 Build Lookup Maps for Comparison
-
-1. **Map Supabase rows by normalized keyword**
-    
-    ```tsx
-    const dbKeywordMap = new Map<string, SupabaseKeywordRow>();
-    
-    for (const row of dbKeywords) {
-      const key = row.keyword.trim().toLowerCase();
-      dbKeywordMap.set(key, row);
-    }
-    
-    ```
-    
-2. **Map combined JSON records by normalized keyword**
-    
-    Read `07-all-keywords-combined-deduped.json`:
-    
-    ```tsx
-    const combinedKeywords: UnifiedKeywordRecord[] = JSON.parse(
-      fs.readFileSync(`./output/${projectId}/07-all-keywords-combined-deduped.json`, "utf-8"),
-    );
-    
-    const combinedMap = new Map<string, UnifiedKeywordRecord>();
-    for (const rec of combinedKeywords) {
-      const key = rec.keyword.trim().toLowerCase();
-      combinedMap.set(key, rec);
-    }
-    
-    ```
-    
-
----
-
-### 6.4 Determine Which Keywords Need Fresh Search Volume/CPC
-
-We want to identify:
-
-1. **Keywords that are not in Supabase yet**
-2. **Keywords that are in Supabase but do not have a `cpc` value yet (i.e. `cpc` is `null`)**
-
-Then we will send these keywords to DataForSEO’s `search_volume` endpoint.
-
-> Your text says “For those keywords that fulfilled both criteria above” – logically, a keyword cannot be both “not in DB” and “has no CPC in DB” at the same time. So we treat it as:
-> 
-> - **Keywords that either do not exist in DB OR exist but have `cpc = null`.**
-
-Implementation:
-
-```tsx
-const keywordsToEnrich: string[] = [];
-
-for (const [key, combinedRec] of combinedMap.entries()) {
-  const dbRow = dbKeywordMap.get(key);
-
-  if (!dbRow) {
-    // 1) keyword not yet in Supabase
-    keywordsToEnrich.push(combinedRec.keyword);
-  } else if (dbRow.cpc === null) {
-    // 2) keyword exists in Supabase but missing CPC
-    keywordsToEnrich.push(combinedRec.keyword);
-  }
-}
-
-```
-
-- Deduplicate `keywordsToEnrich` if necessary.
-
----
-
-### 6.5 Call DataForSEO `search_volume` for Missing/Incomplete Keywords
-
-Use the same endpoint as in Step 2:
-
-- `POST https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live`
-
-**Constraints:**
-
-- Max keywords per request: **1000**
-- Max characters per keyword: **80**
-- Max words per keyword phrase: **10**
-1. Validate each keyword:
-    
-    ```tsx
-    function isValidKeyword(kw: string): boolean {
-      const trimmed = kw.trim();
-      if (trimmed.length === 0) return false;
-      if (trimmed.length > 80) return false;
-      const wordCount = trimmed.split(/\s+/).length;
-      if (wordCount > 10) return false;
-      return true;
-    }
-    
-    const validKeywords = keywordsToEnrich.filter(isValidKeyword);
-    
-    ```
-    
-2. Split into batches of up to 1000:
-    
-    ```tsx
-    function chunk<T>(arr: T[], size: number): T[][] {
-      const chunks: T[][] = [];
-      for (let i = 0; i < arr.length; i += size) {
-        chunks.push(arr.slice(i, i + size));
-      }
-      return chunks;
-    }
-    
-    const keywordBatches = chunk(validKeywords, 1000);
-    
-    ```
-    
-3. For each batch, build request:
-    
-    ```tsx
-    interface SearchVolumeTask {
-      location_code: number;
-      language_code: string;
-      keywords: string[];
-      sort_by: "search_volume";
-    }
-    
-    const tasks: SearchVolumeTask[] = [
-      {
-        location_code: 2458,
-        language_code: "en",
-        keywords: batch,
-        sort_by: "search_volume",
-      },
-    ];
-    
-    ```
-    
-4. Call the API with progress bar:
-    
-    ```tsx
-    const axios = require("axios");
-    
-    for (const batch of keywordBatches) {
-      // update progress bar here
-      const tasks: SearchVolumeTask[] = [
-        {
-          location_code: 2458,
-          language_code: "en",
-          keywords: batch,
-          sort_by: "search_volume",
-        },
-      ];
-    
-      const response = await axios({
-        method: "post",
-        url: "https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live",
-        auth: {
-          username: process.env.DATAFORSEO_LOGIN!,
-          password: process.env.DATAFORSEO_PASSWORD!,
-        },
-        data: tasks,
-        headers: {
-          "content-type": "application/json",
-        },
-      });
-    
-      // process response...
-    }
-    
-    ```
-    
-
----
-
-### 6.6 Process Search Volume Response & Apply Threshold
-
-For each batch response:
-
-- Extract:
-    - Top-level `id` → `api_job_id`.
-    - `result[]` → keyword metrics.
-
-Response example (per batch):
-
-```json
-{
-  "id": "12011045-1164-0367-0000-734fb7e912a4",
-  "data": {
-    "api": "keywords_data",
-    "function": "search_volume",
-    "se": "google_ads",
-    "keywords": ["confinement centre KL", "luxury confinement centre KL"],
-    "location_code": 2458,
-    "language_code": "en",
-    "sort_by": "search_volume"
-  },
-  "result": [
-    {
-      "keyword": "confinement centre KL",
-      "spell": "confinement centre kl",
-      "location_code": 2458,
-      "language_code": "en",
-      "search_partners": false,
-      "competition": "LOW",
-      "competition_index": 27,
-      "search_volume": 880,
-      "low_top_of_page_bid": 0.22,
-      "high_top_of_page_bid": 0.95,
-      "cpc": 0.88,
-      "monthly_searches": [
-        { "year": 2025, "month": 10, "search_volume": 720 },
-        { "year": 2025, "month": 9, "search_volume": 1300 }
-      ]
-    },
-    {
-      "keyword": "luxury confinement centre KL",
-      "spell": null,
-      "location_code": 2458,
-      "language_code": "en",
-      "search_partners": false,
-      "competition": null,
-      "competition_index": null,
-      "search_volume": null,
-      "low_top_of_page_bid": null,
-      "high_top_of_page_bid": null,
-      "cpc": null,
-      "monthly_searches": null
-    }
-  ]
-}
-
-```
-
-### 6.6.1 Compute `avg_monthly_searches`
-
-Same helper as before:
-
-```tsx
-function computeAvgMonthlySearches(
-  monthly_searches: { year: number; month: number; search_volume: number | null }[] | null,
-): number | null {
-  if (!monthly_searches) return null;
-  const valid = monthly_searches.filter(m => m.search_volume !== null);
-  if (valid.length === 0) return null;
-  const sum = valid.reduce((acc, m) => acc + (m.search_volume ?? 0), 0);
-  return sum / valid.length;
-}
-
-```
-
-### 6.6.2 Apply Search Volume Threshold
-
-> Threshold: remove all keywords with search_volume < 100.
-> 
-
-For each `result` item:
-
-- If `search_volume` is `null` or `< 100`, **ignore** this keyword (do not insert/update).
-- Only process items where `search_volume >= 100`.
-
----
-
-### 6.7 Prepare Records for Insert/Update in Supabase
-
-For each **valid** `result` item (after threshold):
-
-1. Normalize keyword key:
-    
-    ```tsx
-    const normalizedKey = item.keyword.trim().toLowerCase();
-    const dbRow = dbKeywordMap.get(normalizedKey);
-    const combinedRec = combinedMap.get(normalizedKey) ?? null;
-    
-    ```
-    
-2. Build the mapped record:
-
-```tsx
-interface UpsertKeywordRecord {
-  keyword: string;
-  projectid: string;
-  api_job_id: string;
-  spell: string | null;
-  location_code: number | null;
-  language_code: string | null;
-  search_partners: boolean | null;
-  competition: string | null;
-  competition_index: number | null;
-  search_volume: number | null;
-  avg_monthly_searches: number | null;
-  low_top_of_page_bid: number | null;
-  high_top_of_page_bid: number | null;
-  cpc: number | null;
-  category_level_1: string | null;
-  category_level_2: string | null;
-  segment_name: string | null;
-  monthly_searches: any; // jsonb
-}
-
-```
-
-Populate:
-
-```tsx
-const avgMonthly = computeAvgMonthlySearches(item.monthly_searches ?? null);
-
-const record: UpsertKeywordRecord = {
-  keyword: item.keyword,
-  projectid,
-  api_job_id: response.id ?? "",
-
-  spell: item.spell ?? null,
-  location_code: item.location_code ?? null,
-  language_code: item.language_code ?? null,
-  search_partners: item.search_partners ?? null,
-  competition: item.competition ?? null,
-  competition_index: item.competition_index ?? null,
-  search_volume: item.search_volume ?? null,
-  avg_monthly_searches: avgMonthly,
-  low_top_of_page_bid: item.low_top_of_page_bid ?? null,
-  high_top_of_page_bid: item.high_top_of_page_bid ?? null,
-  cpc: item.cpc ?? null,
-  monthly_searches: item.monthly_searches ?? null,
-
-  // For existing keywords, keep previous categories.
-  // For new keywords, try to use category from combinedRec if available.
-  category_level_1: dbRow?.category_level_1
-    ?? combinedRec?.category_level_1
-    ?? null,
-  category_level_2: dbRow?.category_level_2
-    ?? combinedRec?.category_level_2
-    ?? null,
-  segment_name: dbRow?.segment_name
-    ?? combinedRec?.segment_name
-    ?? null,
-};
-
-```
-
-1. Collect into an array:
-
-```tsx
-const upsertRecords: UpsertKeywordRecord[] = [];
-// push each record
-
-```
-
----
-
-### 6.8 Insert/Update in Supabase (No Duplicates)
-
-To ensure you **do not create duplicate keyword rows**:
-
-- Ideally, define a **unique constraint** in Postgres on `(projectid, keyword)` (e.g. a unique index).
-- Then use Supabase’s `upsert` with that constraint.
-
-Example:
-
-```tsx
-const { data, error } = await supabase
-  .from("keywords")
-  .upsert(upsertRecords, {
-    onConflict: "projectid,keyword",
-  });
-
-```
-
-- This will:
-    - Insert new rows for keywords not in Supabase.
-    - Update existing rows (including filling in `cpc`, bids, etc.) for those already present.
-
-Use progress bar when upserting many records.
-
----
-
-### 6.9 Build Final Consolidated Keywords JSON
-
-After upserting, you now want a **single consolidated JSON** that contains all keywords (old + new, with latest metrics).
-
-1. Query Supabase again for this `projectId`:
-    
-    ```tsx
-    const { data: finalDbKeywords, error } = await supabase
-      .from("keywords")
-      .select("*")
-      .eq("projectid", projectId);
-    
-    ```
-    
-2. Save this as the final consolidated file, e.g.:
-    - `./output/<projectId>/09-keywords-consolidated-final.json`
-3. Structure example of final JSON:
-    
-    ```json
-    [
-      {
-        "id": 123,
-        "created_at": "2025-12-02T10:00:00.000Z",
-        "updated_at": "2025-12-02T10:15:00.000Z",
-        "keyword": "confinement centre kl",
-        "projectid": "20251202-10-001",
-        "api_job_id": "12011045-1164-0367-0000-734fb7e912a4",
-        "spell": "confinement centre kl",
-        "location_code": 2458,
-        "language_code": "en",
-        "search_partners": false,
-        "competition": "LOW",
-        "competition_index": 27,
-        "search_volume": 880,
-        "avg_monthly_searches": 1010.0,
-        "low_top_of_page_bid": 0.22,
-        "high_top_of_page_bid": 0.95,
-        "cpc": 0.88,
-        "category_level_1": "core_product_keywords",
-        "category_level_2": "core_phrases",
-        "segment_name": null,
-        "monthly_searches": [
-          { "year": 2025, "month": 10, "search_volume": 720 },
-          { "year": 2025, "month": 9, "search_volume": 1300 }
-        ]
-      }
-      // ... all other keywords
-    ]
-    
-    ```
-    
-4. Log summary:
-- Total number of keywords in final DB.
-- How many were newly inserted.
-- How many were updated (CPC/backfill).
-
----
+### 7. Final output per keyword (in JSON 08)
+
+For each keyword in JSON file **index 08**, you’ll have something like:
+
+- `keyword`
+- `avg_monthly_searches`
+- `cpc`
+- `competition_index`
+- `volume_score`
+- `cost_score`
+- `difficulty_score`
+- `ads_score`
+- `tier` (`"A" | "B" | "C"`) — default to **C** when `ads_score` cannot be computed (missing metrics/percentiles)
+- `paid_flag` (`true | false`)
+- `seo_flag` (`true | false`)
+
+This lets you:
+
+- Quickly filter **Tier A + paid_flag = true** for main campaigns
+- Use **seo_flag = true** to decide which keywords should become blog posts / landing pages
+- Keep Tier C & low scores as research / long-tail / future experiments.

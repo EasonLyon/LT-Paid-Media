@@ -25,12 +25,24 @@ export function normalizeProjectInitInput(input: ProjectInitInput): NormalizedPr
     return parts.length ? parts : null;
   };
 
+  const normalizeAdSpend = (value: unknown): number => {
+    const parsed =
+      typeof value === "number"
+        ? value
+        : typeof value === "string"
+        ? Number(value.replace(/,/g, ""))
+        : null;
+    if (parsed === null || Number.isNaN(parsed) || !Number.isFinite(parsed)) return 1000;
+    return Math.max(1000, Math.round(parsed));
+  };
+
   return {
     website,
     goal: (input.goal ?? "Lead").trim() || "Lead",
     location: (input.location ?? "Malaysia").trim() || "Malaysia",
     state_list: normalizeStateList(input.state_list),
     language: (input.language ?? "English").trim() || "English",
+    monthly_adspend_myr: normalizeAdSpend(input.monthly_adspend_myr),
   };
 }
 

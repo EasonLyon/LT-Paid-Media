@@ -38,19 +38,35 @@ export async function fetchInitialKeywordClusters(
 ): Promise<InitialKeywordJson> {
   console.log("[Step1] OpenAI call start");
   const client = getOpenAIClient();
-  const response = await client.responses.create({
-    prompt: {
-      id: promptId,
-      version: "4",
-      variables: {
-        website: normalizedInput.website,
-        goal: normalizedInput.goal ?? "Lead",
-        location: normalizedInput.location ?? "Malaysia",
-        state_list: normalizedInput.state_list ? normalizedInput.state_list.join(", ") : null,
-        language_list: normalizedInput.language ?? "English",
+  let response: Awaited<ReturnType<typeof client.responses.create>>;
+  try {
+    response = await client.responses.create({
+      prompt: {
+        id: promptId,
+        version: "4",
+        variables: {
+          website: normalizedInput.website,
+          goal: normalizedInput.goal ?? "Lead",
+          location: normalizedInput.location ?? "Malaysia",
+          state_list: normalizedInput.state_list ? normalizedInput.state_list.join(", ") : null,
+          language_list: normalizedInput.language ?? "English",
+        },
       },
-    },
-  });
+    });
+    console.log("[OPENAI SUCCESS]", {
+      responseId: response.id,
+      model: response.model,
+      created: response.created_at,
+    });
+  } catch (error) {
+    const err = error as { message?: string; status?: number; response?: { data?: unknown } };
+    console.error("[OPENAI ERROR]", {
+      message: err.message,
+      status: err.status,
+      details: err.response?.data,
+    });
+    throw error;
+  }
 
   const text = extractJsonString(response);
   const parsed = JSON.parse(text) as InitialKeywordJson;

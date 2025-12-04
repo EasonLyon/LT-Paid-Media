@@ -9,20 +9,17 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "projectId is required" }, { status: 400 });
   }
 
-  const resultFilename = "08-keywords-with-scores.json";
+  const progressFile = projectFilePath(projectId, "step2-progress.json");
+  const resultFile = projectFilePath(projectId, "03-keywords-enriched-with-search-volume.json");
 
   try {
-    const file = projectFilePath(projectId, "step6-progress.json");
-    const raw = await fs.readFile(file, "utf8");
+    const raw = await fs.readFile(progressFile, "utf8");
     const json = JSON.parse(raw);
-    const hasResultFile = await fileExists(projectFilePath(projectId, resultFilename));
+    const hasResultFile = await fileExists(resultFile);
     return NextResponse.json({ ...json, hasResultFile });
   } catch {
-    const hasResultFile = await fileExists(projectFilePath(projectId, resultFilename));
-    if (hasResultFile) {
-      return NextResponse.json({ percent: 100, status: "done", hasResultFile });
-    }
-    return NextResponse.json({ percent: 0, status: "pending", hasResultFile });
+    const hasResultFile = await fileExists(resultFile);
+    return NextResponse.json({ percent: 0, status: "pending", hasResultFile, nextPollMs: 2000 });
   }
 }
 

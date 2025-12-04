@@ -2,6 +2,19 @@ import fs from "fs/promises";
 import path from "path";
 
 const OUTPUT_ROOT = path.join(process.cwd(), "output");
+const SAFE_ENTRY_NAME = /^[a-zA-Z0-9._-]+$/;
+
+export type OutputFileSummary = {
+  name: string;
+  size: number;
+  modifiedMs: number;
+};
+
+export type OutputProjectSummary = {
+  id: string;
+  files: OutputFileSummary[];
+  totalSize: number;
+};
 
 export async function ensureOutputRoot(): Promise<string> {
   await fs.mkdir(OUTPUT_ROOT, { recursive: true });
@@ -57,5 +70,87 @@ export async function readProjectProgress<T>(projectId: string, filename: string
     return JSON.parse(raw) as T;
   } catch {
     return null;
+  }
+}
+
+function assertSafeName(value: string, label: string) {
+  if (!SAFE_ENTRY_NAME.test(value) || value.includes("..") || value.includes("/") || value.includes("\\")) {
+    throw new Error(`Invalid ${label}`);
+  }
+}
+
+export async function listOutputProjects(): Promise<OutputProjectSummary[]> {
+  const root = await ensureOutputRoot();
+  const entries = await fs.readdir(root, { withFileTypes: true });
+
+  const projects = await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory() && SAFE_ENTRY_NAME.test(entry.name))
+      .map(async (entry) => {
+        const folder = path.join(root, entry.name);
+        const files = await fs.readdir(folder, { withFileTypes: true });
+        const summaries = await Promise.all(
+          files
+            .filter((file) => file.isFile())
+            .map(async (file) => {
+              const fullPath = path.join(folder, file.name);
+              const stats = await fs.stat(fullPath);
+              return { name: file.name, size: stats.size, modifiedMs: stats.mtimeMs };
+            }),
+        );
+        const totalSize = summaries.reduce((sum, file) => sum + file.size, 0);
+        return { id: entry.name, files: summaries.sort((a, b) => a.name.localeCompare(b.name)), totalSize };
+      }),
+  );
+
+  return projects.sort((a, b) => b.id.localeCompare(a.id));
+}
+
+export async function deleteOutputFile(projectId: string, filename: string): Promise<boolean> {
+  assertSafeName(projectId, "project id");
+  assertSafeName(filename, "file name");
+  const fullPath = projectFilePath(projectId, filename);
+
+  try {
+    const stats = await fs.stat(fullPath);
+    if (!stats.isFile()) {
+      throw new Error("Target is not a file");
+    }
+    await fs.unlink(fullPath);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+export async function deleteOutputProject(projectId: string): Promise<boolean> {
+  assertSafeName(projectId, "project id");
+  const folder = path.join(OUTPUT_ROOT, projectId);
+  try {
+    await fs.access(folder);
+  } catch {
+    return false;
+  }
+  await fs.rm(folder, { recursive: true, force: true });
+  return true;
+}
+
+export async function readOutputFile(projectId: string, filename: string): Promise<{
+  content: string;
+  isJson: boolean;
+  parsed: unknown | null;
+}> {
+  assertSafeName(projectId, "project id");
+  assertSafeName(filename, "file name");
+  const fullPath = projectFilePath(projectId, filename);
+  const content = await fs.readFile(fullPath, "utf8");
+  try {
+    const parsed = JSON.parse(content);
+    return { content, isJson: true, parsed };
+  } catch {
+    return { content, isJson: false, parsed: null };
   }
 }

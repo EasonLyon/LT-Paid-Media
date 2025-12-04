@@ -4,6 +4,7 @@ export interface ProjectInitInput {
   location?: string;
   state_list?: string | string[] | null;
   language?: string;
+  monthly_adspend_myr?: number | string | null;
 }
 
 export interface NormalizedProjectInitInput {
@@ -12,6 +13,7 @@ export interface NormalizedProjectInitInput {
   location: string;
   state_list: string[] | null;
   language: string;
+  monthly_adspend_myr: number;
 }
 
 export interface KeywordCategoryInfo {
@@ -101,6 +103,29 @@ export interface UnifiedKeywordRecord {
   category_level_1?: string | null;
   category_level_2?: string | null;
   segment_name?: string | null;
+}
+
+export type Tier = "A" | "B" | "C";
+export type TieringMode = "fixed" | "percentile";
+
+export interface ScoredKeywordRecord extends UnifiedKeywordRecord {
+  volume_score: number | null;
+  cost_score: number | null;
+  difficulty_score: number | null;
+  ads_score: number | null;
+  tier: Tier;
+  paid_flag: boolean;
+  seo_flag: boolean;
+}
+
+export interface CampaignStructureRow {
+  keyword: string;
+  avg_monthly_searches: number | null;
+  cpc: number | null;
+  tier: Tier;
+  paid_flag: boolean;
+  seo_flag: boolean;
+  ads_score: number | null;
 }
 
 export interface TopOrganicUrl {
@@ -196,6 +221,48 @@ export interface DataForSeoSearchVolumeTask {
     location_code?: number;
     language_code?: string;
   };
+}
+
+export interface CampaignPlanKeyword {
+  Keyword: string;
+  MatchType: string;
+}
+
+export interface CampaignPlanTargeting {
+  Keywords?: CampaignPlanKeyword[];
+  NegativeKeywords?: CampaignPlanKeyword[];
+}
+
+export interface CampaignPlanResponsiveSearchAd {
+  Headlines: string[];
+  Descriptions: string[];
+}
+
+export interface CampaignPlanAdGroup {
+  AdGroupName: string;
+  DefaultMaxCPCMYR: number | null;
+  ResponsiveSearchAds?: CampaignPlanResponsiveSearchAd[];
+  Targeting?: CampaignPlanTargeting;
+}
+
+export interface CampaignPlanLocation {
+  Name: string;
+  RadiusKm: number | null;
+}
+
+export interface CampaignPlan {
+  CampaignName: string;
+  Goal: string;
+  CampaignType: string;
+  BudgetDailyMYR: number | null;
+  TargetCPAMYR: number | null;
+  Language: string;
+  Location: CampaignPlanLocation;
+  AdGroups: CampaignPlanAdGroup[];
+}
+
+export interface CampaignPlanPayload {
+  Campaigns: CampaignPlan[];
 }
 
 export interface DataForSeoSearchVolumeResponse {

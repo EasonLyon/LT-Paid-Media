@@ -26,11 +26,10 @@
 - [ ] Step 5 – Combine & dedupe keywords
   - [ ] `lib/sem/combine-keywords.ts` – `buildCombinedKeywordList(projectId)` and `dedupeKeywords(records)`.
   - [ ] `app/api/sem/combine/route.ts` – `runCombineAndDedupe(projectId)` to emit `07-all-keywords-combined-deduped.json`.
-- [ ] Step 6 – Supabase sync & CPC backfill
-  - [ ] `app/api/sem/supabase-sync/route.ts` – `runSupabaseSync(projectId)`.
-  - [ ] `lib/sem/supabase-sync.ts` – `snapshotSupabaseKeywords(projectId)`, `findKeywordsToEnrich(combined, dbRows)`, `upsertKeywordsWithCpc(records, projectId)`.
-  - [ ] `lib/dataforseo/search-volume.ts` – reuse `fetchSearchVolumeBatches` for backfill requests.
-  - [ ] `lib/storage/project-files.ts` – write `08-supabase-keywords-snapshot.json`, `09-keywords-consolidated-final.json`.
+- [ ] Step 6 – Keyword scoring JSON (from `07` → `08`)
+  - [ ] `app/api/sem/keyword-scoring/route.ts` – `buildKeywordScores(projectId)`.
+  - [ ] `lib/sem/keyword-scoring.ts` – percentile helpers, scoring + tiering, paid/SEO flags.
+  - [ ] `lib/storage/project-files.ts` – write `08-keywords-with-scores.json` and `step6-progress.json`.
 
 ## Next actions (short list)
 

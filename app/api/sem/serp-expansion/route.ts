@@ -12,6 +12,15 @@ import {
 import { EnrichedKeywordRecord, InitialKeywordJson, SerpExpansionResult, TopOrganicUrl } from "@/types/sem";
 import { flattenKeywordsWithCategories } from "@/lib/sem/keywords";
 
+interface SeedSelection {
+  category: string;
+  selected: string[];
+  strategy: "ranked" | "random_fallback";
+  totalAvailable: number;
+}
+
+type Step3HistoryEntry = { target: string; timestamp: string; completed: number; status: "completed" | "failed"; error?: string };
+
 export async function POST(req: Request) {
   try {
     console.log("[Step3] start");
@@ -21,13 +30,14 @@ export async function POST(req: Request) {
     }
 
     const filtered = await readProjectJson<EnrichedKeywordRecord[]>(projectId, "04-keywords-enriched-all.json");
-    const seedKeywords = filtered
-      .filter(
-        (k) =>
-          k.category_level_1 === "core_product_keywords" ||
-          k.category_level_1 === "use_case_segment_keywords",
-      )
-      .map((k) => k.keyword);
+    const { seedKeywords, selection } = selectSeedsByCategoryLevel2(filtered);
+    const seedFilePath = await writeProjectJson(projectId, "04a", "serp-seed-keywords.json", {
+      note: "Keywords selected for SERP expansion, grouped by category_level_2",
+      total_categories: selection.length,
+      total_seeds: seedKeywords.length,
+      selection,
+      source_file: "04-keywords-enriched-all.json",
+    });
 
     const initialJson = await readProjectJson<InitialKeywordJson>(projectId, "01-initial-keyword-clusters.json");
     const originalKeywords = flattenKeywordsWithCategories(initialJson).keywords;
@@ -36,12 +46,12 @@ export async function POST(req: Request) {
     const existingProgress = await readProjectProgress<{
       completed?: number;
       startTimestamp?: number;
-      history?: Array<{ target: string; timestamp: string; completed: number }>;
+      history?: Step3HistoryEntry[];
     }>(projectId, "step3-progress.json");
 
     const completedExisting = Math.min(existingProgress?.completed ?? 0, seedKeywords.length);
     const startTimestamp = existingProgress?.startTimestamp ?? Date.now();
-    const history: Array<{ target: string; timestamp: string; completed: number }> = existingProgress?.history ?? [];
+    const history: Step3HistoryEntry[] = existingProgress?.history ?? [];
 
     const startIndex = force ? 0 : completedExisting;
     if (!force && startIndex >= seedKeywords.length) {
@@ -49,6 +59,7 @@ export async function POST(req: Request) {
         alreadyCompleted: true,
         seeds: seedKeywords.length,
         message: "Step 3 already completed. Pass force=true to rerun.",
+        seedFilePath,
       });
     }
 
@@ -108,23 +119,36 @@ export async function POST(req: Request) {
             people_also_ask_click_depth: 1,
           },
         ];
-        const { data } = await client.post("/v3/serp/google/organic/live/advanced", tasks);
-        const newKs = extractSerpNewKeywords([data], originalKeywordSet);
-        newKs.forEach((k) => newKeywordSet.add(k));
-        const topUrls = extractTopUrls([data]);
-        for (const url of topUrls) {
-          if (!topUrlSet.has(url.url)) {
-            topUrlSet.add(url.url);
-            mergedTopUrls.push(url);
+        try {
+          const { data } = await client.post("/v3/serp/google/organic/live/advanced", tasks);
+          const newKs = extractSerpNewKeywords([data], originalKeywordSet);
+          newKs.forEach((k) => newKeywordSet.add(k));
+          const topUrls = extractTopUrls([data]);
+          for (const url of topUrls) {
+            if (!topUrlSet.has(url.url)) {
+              topUrlSet.add(url.url);
+              mergedTopUrls.push(url);
+            }
           }
+          done += 1;
+          history.push({ target: keyword, timestamp: new Date().toISOString(), completed: done, status: "completed" });
+          await writeProg(done, keyword);
+          await writeProjectJson(projectId, "05", "serp-new-keywords-and-top-urls.json", {
+            new_keywords: Array.from(newKeywordSet),
+            top_organic_urls: mergedTopUrls,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Unknown error";
+          history.push({
+            target: keyword,
+            timestamp: new Date().toISOString(),
+            completed: done,
+            status: "failed",
+            error: message,
+          });
+          await writeProg(done, keyword);
+          throw err;
         }
-        done += 1;
-        history.push({ target: keyword, timestamp: new Date().toISOString(), completed: done });
-        await writeProg(done, keyword);
-        await writeProjectJson(projectId, "05", "serp-new-keywords-and-top-urls.json", {
-          new_keywords: Array.from(newKeywordSet),
-          top_organic_urls: mergedTopUrls,
-        });
       }
     };
 
@@ -145,6 +169,7 @@ export async function POST(req: Request) {
       topUrls: mergedTopUrls.length,
       filePath,
       resumedFrom: startIndex,
+      seedFilePath,
     });
   } catch (error: unknown) {
     console.error("[Step3] failed", error);
@@ -170,4 +195,65 @@ function createRateLimiter(maxPerWindow: number, windowMs: number) {
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function selectSeedsByCategoryLevel2(records: EnrichedKeywordRecord[]): {
+  seedKeywords: string[];
+  selection: SeedSelection[];
+} {
+  const grouped = new Map<string, EnrichedKeywordRecord[]>();
+  for (const record of records) {
+    if (!record.category_level_2) continue;
+    const existing = grouped.get(record.category_level_2) ?? [];
+    existing.push(record);
+    grouped.set(record.category_level_2, existing);
+  }
+
+  const seedSet = new Set<string>();
+  const selection: SeedSelection[] = [];
+
+  for (const [category, recs] of grouped.entries()) {
+    const valid = recs.filter((r) => Boolean(r.keyword));
+    if (valid.length === 0) continue;
+
+    const hasSortable = valid.some((r) => r.search_volume !== null || r.competition_index !== null);
+    const sorted = hasSortable ? sortByVolumeAndCompetition(valid) : shuffle(valid);
+    const chosen = sorted
+      .slice(0, 3)
+      .map((r) => r.keyword)
+      .filter((k): k is string => Boolean(k));
+
+    chosen.forEach((k) => seedSet.add(k));
+    selection.push({
+      category,
+      selected: chosen,
+      strategy: hasSortable ? "ranked" : "random_fallback",
+      totalAvailable: valid.length,
+    });
+  }
+
+  return { seedKeywords: Array.from(seedSet), selection };
+}
+
+function sortByVolumeAndCompetition(records: EnrichedKeywordRecord[]): EnrichedKeywordRecord[] {
+  return [...records].sort((a, b) => {
+    const aVolume = a.search_volume ?? Number.NEGATIVE_INFINITY;
+    const bVolume = b.search_volume ?? Number.NEGATIVE_INFINITY;
+    if (aVolume !== bVolume) {
+      return bVolume - aVolume;
+    }
+
+    const aCompetition = a.competition_index ?? Number.NEGATIVE_INFINITY;
+    const bCompetition = b.competition_index ?? Number.NEGATIVE_INFINITY;
+    return bCompetition - aCompetition;
+  });
+}
+
+function shuffle<T>(arr: T[]): T[] {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
 }

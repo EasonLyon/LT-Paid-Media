@@ -28,11 +28,11 @@ export async function POST(req: Request) {
         total: existingCombined.length,
         message: "Step 5 already completed. Rerun search volume?",
         promptSearchVolume: true,
-        nextSteps: ["rerun_search_volume", "proceed_supabase_upload"],
+        nextSteps: ["rerun_search_volume", "proceed_keyword_scoring"],
       });
     }
 
-    const totalSteps = 4;
+    const totalSteps = 5;
     const startTimestamp = existingProgress?.startTimestamp ?? Date.now();
     const writeProg = async (completed: number, target: string | null, final = false) => {
       const percent = totalSteps === 0 ? 100 : Math.round((completed / totalSteps) * 100);

@@ -1,4 +1,6 @@
 import { EnrichedKeywordRecord, SerpExpansionResult, SiteKeywordRecord, UnifiedKeywordRecord } from "@/types/sem";
+import { fetchSearchVolumeBatches } from "../dataforseo/search-volume";
+import { buildEnrichedKeywords } from "./enrich-search-volume";
 import { readProjectJson, writeProjectJson } from "../storage/project-files";
 
 export function dedupeKeywords(records: UnifiedKeywordRecord[]): UnifiedKeywordRecord[] {
@@ -12,12 +14,43 @@ export function dedupeKeywords(records: UnifiedKeywordRecord[]): UnifiedKeywordR
   return Array.from(deduped.values());
 }
 
+const normalizeSpell = (keyword: string) => keyword.trim().toLowerCase();
+
+async function enrichSerpKeywordsWithSearchVolume(
+  projectId: string,
+  serpKeywords: string[],
+  existingNormalized: Set<string>,
+) {
+  const uniqueKeywords: string[] = [];
+  const seen = new Set<string>();
+
+  for (const kw of serpKeywords) {
+    const normalized = normalizeSpell(kw);
+    if (!normalized || existingNormalized.has(normalized) || seen.has(normalized)) continue;
+    seen.add(normalized);
+    uniqueKeywords.push(kw.trim());
+  }
+
+  if (uniqueKeywords.length === 0) return [];
+
+  console.log(`[Step5] fetching search volume for ${uniqueKeywords.length} serp keyword(s)`);
+  const { responses, skipped } = await fetchSearchVolumeBatches(uniqueKeywords);
+  if (skipped.length) {
+    console.warn(`[Step5] skipped ${skipped.length} serp keyword(s) due to validation`);
+  }
+
+  await writeProjectJson(projectId, "05", "serp-keywords-search-volume-raw.json", responses);
+
+  const enriched = buildEnrichedKeywords(responses, {}, projectId);
+  return enriched;
+}
+
 function mapEnrichedToUnified(rec: EnrichedKeywordRecord): UnifiedKeywordRecord {
   return {
     keyword: rec.keyword,
     projectid: rec.projectid,
     api_job_id: rec.api_job_id,
-    spell: rec.spell,
+    spell: normalizeSpell(rec.keyword),
     location_code: rec.location_code,
     language_code: rec.language_code,
     search_partners: rec.search_partners,
@@ -40,7 +73,7 @@ function mapSiteToUnified(rec: SiteKeywordRecord): UnifiedKeywordRecord {
     keyword: rec.keyword,
     projectid: rec.projectid,
     api_job_id: rec.api_job_id,
-    spell: rec.spell,
+    spell: normalizeSpell(rec.keyword),
     location_code: rec.location_code,
     language_code: rec.language_code,
     search_partners: rec.search_partners,
@@ -61,9 +94,10 @@ function mapSiteToUnified(rec: SiteKeywordRecord): UnifiedKeywordRecord {
 function filterKeywords(records: UnifiedKeywordRecord[]): UnifiedKeywordRecord[] {
   const volumeThreshold = 100;
   return records.filter((rec) => {
+    const hasBids = rec.low_top_of_page_bid !== null && rec.high_top_of_page_bid !== null;
     const hasCpc = rec.cpc !== null && rec.cpc !== undefined;
     const volume = rec.search_volume ?? 0;
-    return hasCpc && volume >= volumeThreshold;
+    return hasBids && hasCpc && volume >= volumeThreshold;
   });
 }
 
@@ -72,7 +106,7 @@ export async function buildCombinedKeywordList(
   onProgress?: (completed: number, target?: string) => Promise<void> | void,
 ): Promise<UnifiedKeywordRecord[]> {
   console.log("[Step5] combine start");
-  const totalSteps = 4;
+  const totalSteps = 5;
   const step = async (count: number, target: string) => {
     if (onProgress) await onProgress(count, target);
   };
@@ -89,39 +123,24 @@ export async function buildCombinedKeywordList(
   const [enriched, siteKeywords, serp] = await Promise.all([enrichedPromise, sitePromise, serpPromise]);
   await step(1, "loaded_sources");
 
+  const existingNormalized = new Set<string>();
+  for (const rec of enriched) existingNormalized.add(normalizeSpell(rec.keyword));
+  for (const rec of siteKeywords) existingNormalized.add(normalizeSpell(rec.keyword));
+
+  const newKeywords: string[] = serp?.new_keywords ?? [];
+  const serpEnriched = await enrichSerpKeywordsWithSearchVolume(projectId, newKeywords, existingNormalized);
+  await step(2, "serp_search_volume");
+
   const unified: UnifiedKeywordRecord[] = [];
   unified.push(...enriched.map(mapEnrichedToUnified));
   unified.push(...siteKeywords.map(mapSiteToUnified));
-
-  const newKeywords: string[] = serp?.new_keywords ?? [];
-  for (const kw of newKeywords) {
-    unified.push({
-      keyword: kw,
-      projectid: projectId,
-      api_job_id: null,
-      spell: null,
-      location_code: null,
-      language_code: null,
-      search_partners: null,
-      competition: null,
-      competition_index: null,
-      search_volume: null,
-      avg_monthly_searches: null,
-      low_top_of_page_bid: null,
-      high_top_of_page_bid: null,
-      cpc: null,
-      monthly_searches: null,
-      category_level_1: null,
-      category_level_2: null,
-      segment_name: null,
-    });
-  }
+  unified.push(...serpEnriched.map(mapEnrichedToUnified));
 
   const deduped = dedupeKeywords(unified);
-  await step(2, "deduped");
+  await step(3, "deduped");
 
   const filtered = filterKeywords(deduped);
-  await step(3, "filtered");
+  await step(4, "filtered");
 
   await writeProjectJson(projectId, "07", "all-keywords-combined-deduped.json", filtered);
   await step(totalSteps, "written");

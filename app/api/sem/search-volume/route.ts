@@ -2,10 +2,31 @@ import { NextResponse } from "next/server";
 import { fetchSearchVolumeBatches } from "@/lib/dataforseo/search-volume";
 import { buildEnrichedKeywords } from "@/lib/sem/enrich-search-volume";
 import { flattenKeywordsWithCategories } from "@/lib/sem/keywords";
-import { readProjectJson, writeProjectJson } from "@/lib/storage/project-files";
+import { readProjectJson, writeProjectJson, writeProjectProgress } from "@/lib/storage/project-files";
 import { supabaseAdmin } from "@/lib/supabase/client";
 import { EnrichedKeywordRecord, InitialKeywordJson } from "@/types/sem";
 import { tqdm } from "node-console-progress-bar-tqdm";
+
+type Step2ProgressInfo = {
+  completedBatches: number;
+  totalBatches: number;
+  processedKeywords: number;
+  totalKeywords: number;
+};
+
+const buildProgressWriter = (projectId: string) => {
+  return async (info: Step2ProgressInfo, status: "running" | "done" | "error" = "running") => {
+    const percent = info.totalKeywords === 0 ? 100 : Math.round((info.processedKeywords / info.totalKeywords) * 100);
+    await writeProjectProgress(projectId, "step2-progress.json", {
+      step: 2,
+      status,
+      percent,
+      ...info,
+      timestamp: new Date().toISOString(),
+      nextPollMs: status === "done" ? 0 : 1000,
+    });
+  };
+};
 
 async function insertIntoSupabase(records: EnrichedKeywordRecord[]) {
   if (!supabaseAdmin) {
@@ -30,17 +51,27 @@ async function insertIntoSupabase(records: EnrichedKeywordRecord[]) {
 }
 
 export async function POST(req: Request) {
+  let latestProgress: Step2ProgressInfo | null = null;
+  let currentProjectId: string | null = null;
   try {
     console.log("[Step2] start");
-    const { projectId } = await req.json();
-    if (!projectId) {
+    const { projectId: incomingProjectId } = await req.json();
+    if (!incomingProjectId) {
       return NextResponse.json({ error: "projectId is required" }, { status: 400 });
     }
+    const projectId = incomingProjectId;
+    currentProjectId = projectId;
 
+    const writeProgress = buildProgressWriter(projectId);
     const initialJson = await readProjectJson<InitialKeywordJson>(projectId, "01-initial-keyword-clusters.json");
     const { keywords, categoryMap } = flattenKeywordsWithCategories(initialJson);
 
-    const { responses, skipped } = await fetchSearchVolumeBatches(keywords);
+    const { responses, skipped } = await fetchSearchVolumeBatches(keywords, {
+      onProgress: async (info) => {
+        latestProgress = info;
+        await writeProgress(info);
+      },
+    });
     await writeProjectJson(projectId, "02", "dataforseo-search-volume-raw.json", responses);
 
     const enriched = buildEnrichedKeywords(responses, categoryMap, projectId);
@@ -48,6 +79,10 @@ export async function POST(req: Request) {
     await writeProjectJson(projectId, "04", "keywords-enriched-all.json", enriched);
 
     await insertIntoSupabase(enriched);
+
+    if (latestProgress) {
+      await writeProgress(latestProgress, "done");
+    }
 
     console.log("[Step2] complete");
     return NextResponse.json({
@@ -57,6 +92,12 @@ export async function POST(req: Request) {
       filteredCount: enriched.length,
     });
   } catch (error: unknown) {
+    if (currentProjectId) {
+      const writeProgressOnError = buildProgressWriter(currentProjectId);
+      const fallbackProgress =
+        latestProgress ?? { completedBatches: 0, totalBatches: 0, processedKeywords: 0, totalKeywords: 0 };
+      await writeProgressOnError(fallbackProgress, "error");
+    }
     console.error("[Step2] failed", error);
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
