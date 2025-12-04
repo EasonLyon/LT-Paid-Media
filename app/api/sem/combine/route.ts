@@ -32,7 +32,7 @@ export async function POST(req: Request) {
       });
     }
 
-    const totalSteps = 5;
+    const totalSteps: number = 5;
     const startTimestamp = existingProgress?.startTimestamp ?? Date.now();
     const writeProg = async (completed: number, target: string | null, final = false) => {
       const percent = totalSteps === 0 ? 100 : Math.round((completed / totalSteps) * 100);

@@ -48,7 +48,7 @@ export async function fetchInitialKeywordClusters(
           website: normalizedInput.website,
           goal: normalizedInput.goal ?? "Lead",
           location: normalizedInput.location ?? "Malaysia",
-          state_list: normalizedInput.state_list ? normalizedInput.state_list.join(", ") : null,
+          state_list: normalizedInput.state_list ? normalizedInput.state_list.join(", ") : "",
           language_list: normalizedInput.language ?? "English",
         },
       },

@@ -194,7 +194,6 @@ export async function buildKeywordScores(projectId: string, tieringMode: Tiering
     percent: 5,
     message: "Loading combined keywords",
     processedKeywords: 0,
-    totalKeywords: null,
   });
 
   try {

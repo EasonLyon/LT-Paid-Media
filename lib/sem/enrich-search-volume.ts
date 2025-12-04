@@ -1,6 +1,7 @@
 import {
   DataForSeoSearchVolumeResponse,
   DataForSeoSearchVolumeTask,
+  DataForSeoSearchVolumeItem,
   DataForSeoSearchVolumeTaskResult,
   EnrichedKeywordRecord,
   KeywordCategoryMap,

@@ -74,33 +74,39 @@ function CollapsibleSection({ title, isOpen, onToggle, children }: CollapsibleSe
   );
 }
 
-async function callApi(endpoint: string, payload: Record<string, unknown>) {
+async function callApi<T extends StepResponse = StepResponse>(endpoint: string, payload: Record<string, unknown>) {
   const res = await fetch(`/api/sem/${endpoint}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   });
-  const json = (await res.json()) as StepResponse;
+  const json = (await res.json()) as unknown;
   if (!res.ok) {
-    const message =
-      typeof json.error === "string"
-        ? json.error
-        : typeof (json as { message?: string }).message === "string"
-        ? (json as { message: string }).message
-        : res.statusText;
+    const parsed = json as StepResponse;
+    const messageFromError = typeof parsed.error === "string" ? parsed.error : undefined;
+    const messageFromMessage =
+      typeof (parsed as { message?: string }).message === "string"
+        ? (parsed as { message: string }).message
+        : undefined;
+    const message = messageFromError ?? messageFromMessage ?? res.statusText;
     throw new Error(message);
   }
-  return json;
+  return json as T;
 }
 
 export default function SemPage() {
   const MIN_AD_SPEND_MYR = 1000;
   const MAX_SLIDER_AD_SPEND_MYR = 50000;
+  const goalOptions = ["Lead", "Traffic", "Sales", "Awareness"];
+  const locationOptions = ["Malaysia", "Singapore", "Indonesia", "Philippines", "Thailand"];
+  const languageOptions = ["English", "Malay", "Chinese", "Tamil"];
+  const OTHER_VALUE = "__other";
   const [projectId, setProjectId] = useState<string>("");
   const [isBusy, setIsBusy] = useState(false);
   const [availableFiles, setAvailableFiles] = useState<string[]>([]);
   const [isFetchingFiles, setIsFetchingFiles] = useState(false);
   const [fileListError, setFileListError] = useState<string | null>(null);
+  const [fileFilter, setFileFilter] = useState<string>("");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [selectedFileContent, setSelectedFileContent] = useState<unknown>(null);
   const [isLoadingFileContent, setIsLoadingFileContent] = useState(false);
@@ -125,9 +131,15 @@ export default function SemPage() {
     location: "Malaysia",
     state_list: "",
     language: "English",
-    monthly_adspend_myr: MIN_AD_SPEND_MYR,
+    monthly_adspend_myr: 5000,
   });
-  const [adSpendInput, setAdSpendInput] = useState<string>(String(MIN_AD_SPEND_MYR));
+  const [adSpendInput, setAdSpendInput] = useState<string>("5000");
+  const [useCustomLocation, setUseCustomLocation] = useState<boolean>(
+    !locationOptions.includes("Malaysia"),
+  );
+  const [useCustomLanguage, setUseCustomLanguage] = useState<boolean>(
+    !languageOptions.includes("English"),
+  );
   const [campaignFilters, setCampaignFilters] = useState<CampaignFiltersState>({
     tiers: { A: true, B: false, C: false },
     paidFlag: true,
@@ -149,6 +161,26 @@ export default function SemPage() {
     step8: true,
   });
 
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    cancelLabel?: string;
+  } | null>(null);
+  const confirmResolver = useRef<((value: boolean) => void) | null>(null);
+
+  const askConfirm = (title: string, message: string, confirmLabel = "Rerun", cancelLabel = "Use existing") =>
+    new Promise<boolean>((resolve) => {
+      confirmResolver.current = resolve;
+      setConfirmDialog({ title, message, confirmLabel, cancelLabel });
+    });
+
+  const handleConfirmResponse = (value: boolean) => {
+    confirmResolver.current?.(value);
+    confirmResolver.current = null;
+    setConfirmDialog(null);
+  };
+
   const toggleSection = (key: CollapsibleKey) => {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -169,7 +201,7 @@ export default function SemPage() {
         language: startForm.language,
         monthly_adspend_myr: startForm.monthly_adspend_myr,
       };
-      const res = await callApi("start", payload);
+      const res = await callApi<{ projectId: string }>("start", payload);
       setProjectId(res.projectId);
       persistProjectId(res.projectId);
       refreshProjectFiles(res.projectId);
@@ -716,7 +748,10 @@ export default function SemPage() {
       const hasResult = json.hasResultFile ?? false;
 
       if (percent >= 100 && hasResult) {
-        const confirmRun = window.confirm("Step 4 already completed. Rerun it?");
+        const confirmRun = await askConfirm(
+          "Step 4 already completed",
+          "We found an existing Step 4 result. Rerun to refresh or keep existing?",
+        );
         return { allow: confirmRun, force: confirmRun };
       }
       if (percent > 0 && percent < 100) {
@@ -738,7 +773,10 @@ export default function SemPage() {
       const hasResult = json.hasResultFile ?? false;
 
       if (percent >= 100 && hasResult) {
-        const confirmRun = window.confirm("Step 3 already completed. Rerun it?");
+        const confirmRun = await askConfirm(
+          "Step 3 already completed",
+          "We found an existing Step 3 result. Rerun to refresh or keep existing?",
+        );
         return { allow: confirmRun, force: confirmRun };
       }
       if (percent > 0 && percent < 100) {
@@ -984,7 +1022,35 @@ export default function SemPage() {
   return (
     <main className="min-h-screen p-6 flex justify-center">
       <div className="w-full max-w-6xl space-y-6">
-        <h1 className="text-2xl font-semibold text-center">SEM Keyword Pipeline</h1>
+        <header className="space-y-3">
+          <h1 className="text-2xl font-semibold text-center">SEM Keyword Pipeline</h1>
+          <div className="border rounded-lg p-3 bg-gray-50 flex flex-wrap items-center gap-3 text-sm">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-gray-700">Project</span>
+              <span className={`px-2 py-1 rounded ${projectId ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}>
+                {projectId || "Not set"}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-gray-700">Filters</span>
+              <span className="px-2 py-1 rounded bg-blue-100 text-blue-800">
+                Tiers: {getSelectedCampaignFilters().tiers.join(", ")}
+              </span>
+              <span className="px-2 py-1 rounded bg-purple-100 text-purple-800">
+                Paid: {getSelectedCampaignFilters().paidFlag ? "true" : "false"}
+              </span>
+              <span className="px-2 py-1 rounded bg-amber-100 text-amber-800">
+                SEO: {getSelectedCampaignFilters().seoFlag ? "true" : "false"}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-gray-700">Status</span>
+              <span className="px-2 py-1 rounded bg-gray-200 text-gray-700">
+                Last: {Object.values(stepStatuses).some((s) => s.status === "running") ? "Running" : "Idle"}
+              </span>
+            </div>
+          </div>
+        </header>
 
         <div className="flex flex-col gap-6 md:flex-row md:items-start">
           <div className="flex-1 space-y-6">
@@ -1006,6 +1072,11 @@ export default function SemPage() {
               <div className="text-sm text-gray-600">
                 Used for starting/running steps and browsing generated JSON for this project.
               </div>
+              {!projectId && (
+                <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
+                  Set a projectId to run steps and fetch files.
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-3 text-sm">
                 <button
                   className="border rounded px-3 py-2 bg-blue-50 disabled:opacity-50"
@@ -1022,9 +1093,17 @@ export default function SemPage() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-sm">
                   <span>Available JSON files</span>
+                  <input
+                    className="border rounded px-2 py-1 w-48"
+                    placeholder="Filter files"
+                    value={fileFilter}
+                    onChange={(e) => setFileFilter(e.target.value)}
+                  />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto">
-                  {availableFiles.map((file) => (
+                  {availableFiles
+                    .filter((file) => file.toLowerCase().includes(fileFilter.toLowerCase()))
+                    .map((file) => (
                     <button
                       key={file}
                       className="border rounded px-3 py-2 text-left hover:bg-blue-50"
@@ -1036,6 +1115,10 @@ export default function SemPage() {
                   {availableFiles.length === 0 && (
                     <div className="text-sm text-gray-500">No JSON files found for this project yet.</div>
                   )}
+                  {availableFiles.length > 0 &&
+                    availableFiles.filter((file) => file.toLowerCase().includes(fileFilter.toLowerCase())).length === 0 && (
+                      <div className="text-sm text-gray-500">No matches for "{fileFilter}".</div>
+                    )}
                 </div>
               </div>
             </CollapsibleSection>
@@ -1045,6 +1128,10 @@ export default function SemPage() {
               isOpen={openSections.step1}
               onToggle={() => toggleSection("step1")}
             >
+              <p className="text-sm text-gray-700 leading-relaxed">
+                We scrape your website&apos;s public content here to understand your business and brainstorm ad-ready
+                keyword ideas you can run campaigns with.
+              </p>
               <form className="grid gap-3" onSubmit={handleStart}>
                 <label className="grid gap-1">
                   <span>Website (required)</span>
@@ -1059,19 +1146,48 @@ export default function SemPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <label className="grid gap-1">
                     <span>Goal</span>
-                    <input
+                    <select
                       className="border rounded px-3 py-2"
                       value={startForm.goal}
                       onChange={(e) => setStartForm((prev) => ({ ...prev, goal: e.target.value }))}
-                    />
+                    >
+                      {goalOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                   <label className="grid gap-1">
                     <span>Location</span>
-                    <input
+                    <select
                       className="border rounded px-3 py-2"
-                      value={startForm.location}
-                      onChange={(e) => setStartForm((prev) => ({ ...prev, location: e.target.value }))}
-                    />
+                      value={useCustomLocation ? OTHER_VALUE : startForm.location}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === OTHER_VALUE) {
+                          setUseCustomLocation(true);
+                        } else {
+                          setUseCustomLocation(false);
+                          setStartForm((prev) => ({ ...prev, location: value }));
+                        }
+                      }}
+                    >
+                      {locationOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                      <option value={OTHER_VALUE}>Other</option>
+                    </select>
+                    {useCustomLocation && (
+                      <input
+                        className="border rounded px-3 py-2 mt-2"
+                        value={startForm.location}
+                        onChange={(e) => setStartForm((prev) => ({ ...prev, location: e.target.value }))}
+                        placeholder="Enter a location"
+                      />
+                    )}
                   </label>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -1086,11 +1202,34 @@ export default function SemPage() {
                   </label>
                   <label className="grid gap-1">
                     <span>Language</span>
-                    <input
+                    <select
                       className="border rounded px-3 py-2"
-                      value={startForm.language}
-                      onChange={(e) => setStartForm((prev) => ({ ...prev, language: e.target.value }))}
-                    />
+                      value={useCustomLanguage ? OTHER_VALUE : startForm.language}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === OTHER_VALUE) {
+                          setUseCustomLanguage(true);
+                        } else {
+                          setUseCustomLanguage(false);
+                          setStartForm((prev) => ({ ...prev, language: value }));
+                        }
+                      }}
+                    >
+                      {languageOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                      <option value={OTHER_VALUE}>Other</option>
+                    </select>
+                    {useCustomLanguage && (
+                      <input
+                        className="border rounded px-3 py-2 mt-2"
+                        value={startForm.language}
+                        onChange={(e) => setStartForm((prev) => ({ ...prev, language: e.target.value }))}
+                        placeholder="Enter a language"
+                      />
+                    )}
                   </label>
                 </div>
                 <div className="space-y-2">
@@ -1123,6 +1262,9 @@ export default function SemPage() {
                       Selected: RM{startForm.monthly_adspend_myr.toLocaleString("en-MY")}
                     </span>
                   </div>
+                  {startForm.monthly_adspend_myr < MIN_AD_SPEND_MYR && (
+                    <div className="text-sm text-red-600">Min RM{MIN_AD_SPEND_MYR.toLocaleString("en-MY")}.</div>
+                  )}
                 </div>
                 <button
                   type="submit"
@@ -1140,49 +1282,64 @@ export default function SemPage() {
               onToggle={() => toggleSection("runSteps")}
             >
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {[
+                  { endpoint: "search-volume", label: "Step 2 – Search Volume", key: "search" as StepKey },
+                  { endpoint: "serp-expansion", label: "Step 3 – SERP Expansion", key: "serp" as StepKey },
+                  { endpoint: "site-keywords", label: "Step 4 – Keywords for Site", key: "site" as StepKey },
+                  { endpoint: "combine", label: "Step 5 – Combine & Dedupe", key: "combine" as StepKey },
+                  { endpoint: "keyword-scoring", label: "Step 6 – Keyword Scoring", key: "score" as StepKey },
+                ].map((step) => {
+                  const state = stepStatuses[step.key];
+                  const statusLabel =
+                    state.status === "running"
+                      ? "Running"
+                      : state.status === "success"
+                      ? "Done"
+                      : state.status === "error"
+                      ? "Error"
+                      : "Idle";
+                  return (
+                    <button
+                      key={step.endpoint}
+                      className={`border rounded px-3 py-2 text-left disabled:opacity-50 ${
+                        state.status === "running"
+                          ? "border-blue-300 bg-blue-50"
+                          : state.status === "error"
+                          ? "border-red-300 bg-red-50"
+                          : "bg-white"
+                      }`}
+                      disabled={isBusy || !projectId}
+                      onClick={() => runStep(step.endpoint, step.label)}
+                    >
+                      <div className="font-medium">{step.label}</div>
+                      <div className="text-xs text-gray-600 flex items-center gap-2">
+                        <span
+                          className={`inline-block h-2 w-2 rounded-full ${
+                            state.status === "running"
+                              ? "bg-blue-500 animate-pulse"
+                              : state.status === "success"
+                              ? "bg-green-500"
+                              : state.status === "error"
+                              ? "bg-red-500"
+                              : "bg-gray-400"
+                          }`}
+                        />
+                        <span>{statusLabel}</span>
+                      </div>
+                    </button>
+                  );
+                })}
                 <button
-                  className="border rounded px-3 py-2"
-                  disabled={isBusy}
-                  onClick={() => runStep("search-volume", "Step 2 – Search Volume")}
-                >
-                  Step 2 – Search Volume
-                </button>
-                <button
-                  className="border rounded px-3 py-2"
-                  disabled={isBusy}
-                  onClick={() => runStep("serp-expansion", "Step 3 – SERP Expansion")}
-                >
-                  Step 3 – SERP Expansion
-                </button>
-                <button
-                  className="border rounded px-3 py-2"
-                  disabled={isBusy}
-                  onClick={() => runStep("site-keywords", "Step 4 – Keywords for Site")}
-                >
-                  Step 4 – Keywords for Site
-                </button>
-                <button
-                  className="border rounded px-3 py-2"
-                  disabled={isBusy}
-                  onClick={() => runStep("combine", "Step 5 – Combine & Dedupe")}
-                >
-                  Step 5 – Combine & Dedupe
-                </button>
-                <button
-                  className="border rounded px-3 py-2"
-                  disabled={isBusy}
-                  onClick={() => runStep("keyword-scoring", "Step 6 – Keyword Scoring")}
-                >
-                  Step 6 – Keyword Scoring
-                </button>
-                <button
-                  className="border rounded px-3 py-2 bg-blue-50"
-                  disabled={isBusy}
+                  className="rounded px-3 py-2 bg-blue-600 text-white disabled:opacity-50"
+                  disabled={isBusy || !projectId}
                   onClick={runAllSteps}
                 >
                   Run All (2→6)
                 </button>
               </div>
+              {!projectId && (
+                <div className="text-xs text-gray-600 mt-2">Enter a projectId above to enable these actions.</div>
+              )}
             </CollapsibleSection>
 
             <CollapsibleSection
@@ -1247,7 +1404,7 @@ export default function SemPage() {
               <div className="flex flex-wrap gap-3">
                 <button
                   className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
-                  disabled={isBusy}
+                  disabled={isBusy || !projectId}
                   onClick={handleCampaignStructure}
                 >
                   {isBusy ? "Working..." : "Generate campaign CSV"}
@@ -1303,7 +1460,7 @@ export default function SemPage() {
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
-                  disabled={isBusy}
+                  disabled={isBusy || !projectId}
                   onClick={handleGenerateCampaignPlan}
                 >
                   {isStep8Running ? "Working..." : "Generate campaign plan"}
@@ -1421,35 +1578,51 @@ export default function SemPage() {
       </div>
 
       {selectedFile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/50 p-4" onClick={closeFileViewer}>
           <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-            onClick={closeFileViewer}
+            className="bg-white w-full max-w-4xl rounded shadow-lg overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
           >
-            <div
-              className="bg-white w-full max-w-4xl rounded shadow-lg overflow-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between border-b px-4 py-3">
-                <div className="min-w-0">
-                  <div className="text-lg font-medium">JSON Viewer</div>
-                  <div className="text-sm text-gray-600 truncate">{selectedFile}</div>
-                </div>
-                <button className="border rounded px-3 py-2" onClick={closeFileViewer}>
-                  Close
-                </button>
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <div className="min-w-0">
+                <div className="text-lg font-medium">JSON Viewer</div>
+                <div className="text-sm text-gray-600 truncate">{selectedFile}</div>
               </div>
-              <div className="p-4 bg-gray-50 max-h-[70vh] overflow-y-auto">
-                {isLoadingFileContent && <div className="text-sm text-gray-600">Loading...</div>}
-                {!isLoadingFileContent && fileViewerError && (
-                  <div className="text-sm text-red-600">{fileViewerError}</div>
-                )}
-                {!isLoadingFileContent && !fileViewerError && (
-                  <pre className="text-xs whitespace-pre-wrap">
-                    {selectedFileContent === null ? "No content" : JSON.stringify(selectedFileContent, null, 2)}
-                  </pre>
-                )}
-              </div>
+              <button className="border rounded px-3 py-2" onClick={closeFileViewer}>
+                Close
+              </button>
+            </div>
+            <div className="p-4 bg-gray-50 max-h-[70vh] overflow-y-auto">
+              {isLoadingFileContent && <div className="text-sm text-gray-600">Loading...</div>}
+              {!isLoadingFileContent && fileViewerError && (
+                <div className="text-sm text-red-600">{fileViewerError}</div>
+              )}
+              {!isLoadingFileContent && !fileViewerError && (
+                <pre className="text-xs whitespace-pre-wrap">
+                  {selectedFileContent === null ? "No content" : JSON.stringify(selectedFileContent, null, 2)}
+                </pre>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {confirmDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => handleConfirmResponse(false)}>
+          <div
+            className="bg-white w-full max-w-md rounded shadow-lg overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b px-4 py-3">
+              <div className="text-lg font-medium">{confirmDialog.title}</div>
+            </div>
+            <div className="px-4 py-3 text-sm text-gray-700">{confirmDialog.message}</div>
+            <div className="flex justify-end gap-3 px-4 py-3 border-t">
+              <button className="border rounded px-4 py-2" onClick={() => handleConfirmResponse(false)}>
+                {confirmDialog.cancelLabel || "Cancel"}
+              </button>
+              <button className="bg-blue-600 text-white rounded px-4 py-2" onClick={() => handleConfirmResponse(true)}>
+                {confirmDialog.confirmLabel || "Confirm"}
+              </button>
             </div>
           </div>
         </div>
