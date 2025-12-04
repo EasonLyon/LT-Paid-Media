@@ -3,7 +3,6 @@ import { getDataForSeoClient } from "./client";
 
 interface SerpOptions {
   location_code?: number;
-  language_code?: string;
   device?: "desktop" | "mobile";
   os?: "windows" | "macos" | "android" | "ios";
   depth?: number;
@@ -18,7 +17,6 @@ export async function fetchSerpResults(
 ): Promise<unknown[]> {
   const client = getDataForSeoClient();
   const location_code = options.location_code ?? 2458;
-  const language_code = options.language_code ?? "en";
   const device = options.device ?? "mobile";
   const os = options.os ?? "android";
   const depth = options.depth ?? 10;
@@ -33,7 +31,6 @@ export async function fetchSerpResults(
       {
         keyword,
         location_code,
-        language_code,
         device,
         os,
         depth,

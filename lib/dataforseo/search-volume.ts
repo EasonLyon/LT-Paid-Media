@@ -5,7 +5,6 @@ import { DataForSeoSearchVolumeResponse } from "@/types/sem";
 
 interface SearchVolumeOptions {
   location_code?: number;
-  language_code?: string;
   batchSize?: number;
   onProgress?: (info: {
     completedBatches: number;
@@ -22,7 +21,6 @@ export async function fetchSearchVolumeBatches(
   const client = getDataForSeoClient();
   const batchSize = options.batchSize ?? 1000;
   const location_code = options.location_code ?? 2458;
-  const language_code = options.language_code ?? "en";
   const onProgress = options.onProgress;
 
   console.log("[search-volume] validating keywords");
@@ -43,7 +41,6 @@ export async function fetchSearchVolumeBatches(
     const tasks = [
       {
         location_code,
-        language_code,
         keywords: batch,
         sort_by: "search_volume",
       },

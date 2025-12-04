@@ -29,8 +29,17 @@ interface StartFormState {
   monthly_adspend_myr: number;
 }
 
-type StepKey = "start" | "search" | "serp" | "site" | "combine" | "score" | "campaign" | "campaignPlan";
-type CollapsibleKey = "project" | "step1" | "runSteps" | "step7" | "step8";
+type StepKey =
+  | "start"
+  | "search"
+  | "serp"
+  | "site"
+  | "combine"
+  | "score"
+  | "campaign"
+  | "campaignPlan"
+  | "visualizer";
+type CollapsibleKey = "project" | "step1" | "runSteps" | "step7" | "step8" | "step9";
 
 interface StepStatus {
   status: "idle" | "running" | "success" | "error";
@@ -95,6 +104,39 @@ function CollapsibleSection({ title, isOpen, onToggle, children }: CollapsibleSe
   );
 }
 
+function EyeIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      stroke="currentColor"
+      strokeWidth="1.5"
+    >
+      <path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function DownloadIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      stroke="currentColor"
+      strokeWidth="1.5"
+    >
+      <path d="M12 3v12" strokeLinecap="round" />
+      <path d="M8.5 11.5 12 15l3.5-3.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 18h16" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 async function callApi<T extends StepResponse = StepResponse>(endpoint: string, payload: Record<string, unknown>) {
   const res = await fetch(`/api/sem/${endpoint}`, {
     method: "POST",
@@ -125,6 +167,14 @@ function buildLocalProjectIdFallback(): string {
   return `${prefix}-${suffix}`;
 }
 
+function getShortFileLabel(filename: string): string {
+  const dashIndex = filename.indexOf("-");
+  if (dashIndex > 0) {
+    return filename.slice(0, dashIndex);
+  }
+  return filename;
+}
+
 export default function SemPage() {
   const MIN_AD_SPEND_MYR = 1000;
   const MAX_SLIDER_AD_SPEND_MYR = 50000;
@@ -141,10 +191,17 @@ export default function SemPage() {
   const [isFetchingFiles, setIsFetchingFiles] = useState(false);
   const [fileListError, setFileListError] = useState<string | null>(null);
   const [fileFilter, setFileFilter] = useState<string>("");
+  const [fileTypeFilter, setFileTypeFilter] = useState<"json" | "csv" | "any">("json");
+  const [hideStepFiles, setHideStepFiles] = useState<boolean>(true);
+  const [selectedFilesForDownload, setSelectedFilesForDownload] = useState<Set<string>>(() => new Set());
+  const [isDownloadingFiles, setIsDownloadingFiles] = useState(false);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [selectedFileContent, setSelectedFileContent] = useState<unknown>(null);
+  const [selectedFileContent, setSelectedFileContent] = useState<string>("");
+  const [fileContentMeta, setFileContentMeta] = useState<{ isJson: boolean } | null>(null);
   const [isLoadingFileContent, setIsLoadingFileContent] = useState(false);
+  const [isSavingFileContent, setIsSavingFileContent] = useState(false);
   const [fileViewerError, setFileViewerError] = useState<string | null>(null);
+  const [fileViewerMessage, setFileViewerMessage] = useState<string | null>(null);
   const [progress, setProgress] = useState<number>(0);
   const [step1Elapsed, setStep1Elapsed] = useState<number>(0);
   const { logs, push } = useLogs();
@@ -157,6 +214,7 @@ export default function SemPage() {
     score: { status: "idle" },
     campaign: { status: "idle" },
     campaignPlan: { status: "idle" },
+    visualizer: { status: "idle" },
   });
 
   const [startForm, setStartForm] = useState<StartFormState>({
@@ -193,6 +251,7 @@ export default function SemPage() {
     runSteps: true,
     step7: true,
     step8: true,
+    step9: true,
   });
 
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -349,7 +408,7 @@ export default function SemPage() {
     setIsFetchingFiles(true);
     setFileListError(null);
     try {
-      const res = await fetch(`/api/sem/project-files?projectId=${encodeURIComponent(pid)}`, {
+      const res = await fetch(`/api/sem/project-files?projectId=${encodeURIComponent(pid)}&include=all`, {
         cache: "no-store",
       });
       const json = (await res.json()) as { files?: string[]; error?: string };
@@ -357,7 +416,15 @@ export default function SemPage() {
         const message = json.error ?? res.statusText;
         throw new Error(message);
       }
-      setAvailableFiles(json.files ?? []);
+      const files = json.files ?? [];
+      setAvailableFiles(files);
+      setSelectedFilesForDownload((prev) => {
+        const next = new Set<string>();
+        for (const name of prev) {
+          if (files.includes(name)) next.add(name);
+        }
+        return next;
+      });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unable to load files";
       setAvailableFiles([]);
@@ -376,23 +443,31 @@ export default function SemPage() {
   const openFile = async (filename: string) => {
     if (!projectId || !filename) return;
     setSelectedFile(filename);
-    setSelectedFileContent(null);
+    setSelectedFileContent("");
+    setFileContentMeta(null);
     setFileViewerError(null);
+    setFileViewerMessage(null);
+    setIsSavingFileContent(false);
     setIsLoadingFileContent(true);
     try {
       const res = await fetch(
-        `/api/sem/project-files?projectId=${encodeURIComponent(projectId)}&file=${encodeURIComponent(filename)}`,
+        `/api/sem/project-files?projectId=${encodeURIComponent(projectId)}&file=${encodeURIComponent(filename)}&mode=text`,
         { cache: "no-store" },
       );
-      const json = (await res.json()) as { data?: unknown; error?: string };
+      const json = (await res.json()) as { content?: string; parsed?: unknown; isJson?: boolean; error?: string };
       if (!res.ok || json.error) {
         const message = json.error ?? res.statusText;
         throw new Error(message);
       }
-      setSelectedFileContent(json.data ?? null);
+      const content =
+        json.isJson && json.parsed !== undefined
+          ? JSON.stringify(json.parsed, null, 2)
+          : json.content ?? "";
+      setSelectedFileContent(content);
+      setFileContentMeta({ isJson: Boolean(json.isJson) });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unable to read file";
-      setSelectedFileContent(null);
+      setSelectedFileContent("");
       setFileViewerError(message);
     } finally {
       setIsLoadingFileContent(false);
@@ -401,9 +476,124 @@ export default function SemPage() {
 
   const closeFileViewer = () => {
     setSelectedFile(null);
-    setSelectedFileContent(null);
+    setSelectedFileContent("");
+    setFileContentMeta(null);
     setFileViewerError(null);
+    setFileViewerMessage(null);
     setIsLoadingFileContent(false);
+    setIsSavingFileContent(false);
+  };
+
+  const toggleFileSelection = (filename: string) => {
+    setSelectedFilesForDownload((prev) => {
+      const next = new Set(prev);
+      if (next.has(filename)) {
+        next.delete(filename);
+      } else {
+        next.add(filename);
+      }
+      return next;
+    });
+  };
+
+  const matchesFileTypeFilter = (filename: string) => {
+    const lower = filename.toLowerCase();
+    if (hideStepFiles && lower.startsWith("step")) return false;
+    if (fileTypeFilter === "json") return lower.endsWith(".json");
+    if (fileTypeFilter === "csv") return lower.endsWith(".csv");
+    return true;
+  };
+
+  const getFileTypeLabel = (filename: string) => {
+    const lower = filename.toLowerCase();
+    if (lower.endsWith(".json")) return "JSON";
+    if (lower.endsWith(".csv")) return "CSV";
+    return "File";
+  };
+
+  const downloadFile = async (filename: string) => {
+    if (!projectId) return;
+    setFileListError(null);
+    try {
+      const res = await fetch(
+        `/api/sem/project-files?projectId=${encodeURIComponent(projectId)}&file=${encodeURIComponent(filename)}&mode=download`,
+      );
+      if (!res.ok) {
+        const fallbackMessage = await res.text();
+        const message = fallbackMessage || res.statusText;
+        throw new Error(message);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to download file";
+      setFileListError(message);
+      push(`Download failed for ${filename}: ${message}`);
+    }
+  };
+
+  const downloadSelectedFiles = async () => {
+    if (!projectId) return;
+    const files = filteredFiles.filter((file) => selectedFilesForDownload.has(file));
+    if (files.length === 0) return;
+    setIsDownloadingFiles(true);
+    setFileListError(null);
+    try {
+      for (const file of files) {
+        await downloadFile(file);
+      }
+      push(`Downloaded ${files.length} file(s)`);
+    } finally {
+      setIsDownloadingFiles(false);
+    }
+  };
+
+  const formatJsonContent = () => {
+    if (!fileContentMeta?.isJson) return;
+    try {
+      const parsed = JSON.parse(selectedFileContent);
+      setSelectedFileContent(JSON.stringify(parsed, null, 2));
+      setFileViewerMessage("Formatted JSON");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to format JSON";
+      setFileViewerError(message);
+    }
+  };
+
+  const saveFileEdits = async () => {
+    if (!projectId || !selectedFile) return;
+    setIsSavingFileContent(true);
+    setFileViewerError(null);
+    setFileViewerMessage(null);
+    try {
+      const res = await fetch(
+        `/api/sem/project-files?projectId=${encodeURIComponent(projectId)}&file=${encodeURIComponent(selectedFile)}`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ content: selectedFileContent }),
+        },
+      );
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok || json.error) {
+        const message = json?.error ?? res.statusText;
+        throw new Error(message);
+      }
+      setFileViewerMessage("Saved to output");
+      refreshProjectFiles(projectId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to save file";
+      setFileViewerError(message);
+    } finally {
+      setIsSavingFileContent(false);
+    }
   };
 
   useEffect(() => {
@@ -411,8 +601,22 @@ export default function SemPage() {
       refreshProjectFiles(projectId);
     } else {
       setAvailableFiles([]);
+      setSelectedFilesForDownload(new Set());
     }
   }, [projectId, refreshProjectFiles]);
+
+  useEffect(() => {
+    const hasPlan =
+      availableFiles.some((file) => file.startsWith("10-") && file.endsWith(".json")) ||
+      availableFiles.some((file) => file.startsWith("11-") && file.endsWith(".json"));
+    setStepStatuses((prev) => ({
+      ...prev,
+      visualizer: {
+        status: hasPlan ? "success" : "idle",
+        message: hasPlan ? "10/11 plan ready" : "Run Step 8 to generate plan",
+      },
+    }));
+  }, [availableFiles]);
 
   const runStep = async (endpoint: string, label: string) => {
     if (!projectId) {
@@ -1104,6 +1308,11 @@ export default function SemPage() {
     }
   };
 
+  const filteredFiles = availableFiles
+    .filter((file) => matchesFileTypeFilter(file))
+    .filter((file) => file.toLowerCase().includes(fileFilter.toLowerCase()));
+  const selectedDownloadCount = filteredFiles.filter((file) => selectedFilesForDownload.has(file)).length;
+
   return (
     <main className="min-h-screen p-6 flex justify-center">
       <div className="w-full max-w-6xl space-y-6">
@@ -1191,57 +1400,13 @@ export default function SemPage() {
                 )}
               </div>
               <div className="text-sm text-gray-600">
-                Used for starting/running steps and browsing generated JSON for this project.
+                Used for starting/running steps and browsing generated files for this project.
               </div>
               {!projectId && (
                 <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
                   Set a projectId to run steps and fetch files.
                 </div>
               )}
-              <div className="flex flex-wrap items-center gap-3 text-sm">
-                <button
-                  className="border rounded px-3 py-2 bg-blue-50 disabled:opacity-50"
-                  onClick={() => projectId && refreshProjectFiles(projectId)}
-                  disabled={!projectId || isFetchingFiles}
-                >
-                  {isFetchingFiles ? "Loading files..." : "Refresh files"}
-                </button>
-                {fileListError && <span className="text-red-600">{fileListError}</span>}
-                {!fileListError && availableFiles.length > 0 && (
-                  <span className="text-gray-600">{availableFiles.length} file(s) found</span>
-                )}
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span>Available JSON files</span>
-                  <input
-                    className="border rounded px-2 py-1 w-48"
-                    placeholder="Filter files"
-                    value={fileFilter}
-                    onChange={(e) => setFileFilter(e.target.value)}
-                  />
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto">
-                  {availableFiles
-                    .filter((file) => file.toLowerCase().includes(fileFilter.toLowerCase()))
-                    .map((file) => (
-                    <button
-                      key={file}
-                      className="border rounded px-3 py-2 text-left hover:bg-blue-50"
-                      onClick={() => openFile(file)}
-                    >
-                      {file}
-                    </button>
-                  ))}
-                  {availableFiles.length === 0 && (
-                    <div className="text-sm text-gray-500">No JSON files found for this project yet.</div>
-                  )}
-                  {availableFiles.length > 0 &&
-                    availableFiles.filter((file) => file.toLowerCase().includes(fileFilter.toLowerCase())).length === 0 && (
-                      <div className="text-sm text-gray-500">No matches for &quot;{fileFilter}&quot;.</div>
-                    )}
-                </div>
-              </div>
             </CollapsibleSection>
 
             <CollapsibleSection
@@ -1605,6 +1770,42 @@ export default function SemPage() {
                 </div>
               )}
             </CollapsibleSection>
+
+            <CollapsibleSection
+              title="Step 9 – Visualize & QA"
+              isOpen={openSections.step9}
+              onToggle={() => toggleSection("step9")}
+            >
+              <p className="text-sm text-gray-600">
+                Launch the new visualization workspace to explore Campaign → Ad Group → Ads/Keywords/Negatives or switch
+                to QA tables. On first load, we copy your 10-*.json to 10-campaign-plan.backup.json before edits.
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <a
+                  className="bg-blue-600 text-white px-4 py-2 rounded inline-flex items-center gap-2"
+                  href={`/sem/visualizer${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open visualization
+                  <span aria-hidden>↗</span>
+                </a>
+                <span className="text-sm text-gray-700">
+                  Current project: {projectId || "Set a projectId above"} (uses files starting with 10-)
+                </span>
+              </div>
+              <div className="text-xs text-gray-600">
+                Exports CSVs, inline edits (double click cells), and lets you toggle negatives per keyword before sending to
+                Google Ads/Editor.
+              </div>
+              {availableFiles.some((file) => file.startsWith("10-") || file.startsWith("11-")) && (
+                <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2">
+                  Found{" "}
+                  {availableFiles.filter((file) => file.startsWith("10-") || file.startsWith("11-")).length} file(s)
+                  starting with 10-/11- for this project.
+                </div>
+              )}
+            </CollapsibleSection>
           </div>
 
           <div className="flex-1 min-w-0 flex flex-col gap-4 md:h-[80vh] md:basis-1/2">
@@ -1662,6 +1863,7 @@ export default function SemPage() {
                   { key: "score", label: "Step 6 – Keyword Scoring" },
                   { key: "campaign", label: "Step 7 – Campaign Structure" },
                   { key: "campaignPlan", label: "Step 8 – Campaign Plan" },
+                  { key: "visualizer", label: "Step 9 – Visualize & QA" },
                 ] as Array<{ key: StepKey; label: string }>).map((item) => {
                   const state = stepStatuses[item.key];
                   const color =
@@ -1694,6 +1896,163 @@ export default function SemPage() {
                 })}
               </div>
             </section>
+
+            <section className="space-y-3 border rounded-lg p-4 md:flex-1">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="text-xl font-medium">Output Files</h2>
+                  <div className="text-sm text-gray-600">
+                    View, download, or edit files saved in <code className="font-mono">output/{projectId || "projectId"}</code>.
+                  </div>
+                </div>
+                <button
+                  className="border rounded px-3 py-2 bg-white hover:bg-blue-50 text-sm disabled:opacity-50"
+                  onClick={() => projectId && refreshProjectFiles(projectId)}
+                  disabled={!projectId || isFetchingFiles}
+                >
+                  {isFetchingFiles ? "Loading..." : "Refresh"}
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <span className="text-gray-700">
+                  {projectId ? `Project ${projectId}` : "Set a projectId above to load files."}
+                </span>
+                {!fileListError && availableFiles.length > 0 && (
+                  <span className="text-gray-600">
+                    Showing {filteredFiles.length} of {availableFiles.length} file(s)
+                  </span>
+                )}
+                {fileListError && <span className="text-red-600">{fileListError}</span>}
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <label className="flex items-center gap-2">
+                  <span>Search</span>
+                  <input
+                    className="border rounded px-2 py-1 w-48"
+                    placeholder="Filter files"
+                    value={fileFilter}
+                    onChange={(e) => setFileFilter(e.target.value)}
+                    disabled={!projectId}
+                  />
+                </label>
+                <label className="flex items-center gap-2">
+                  <span>Type</span>
+                  <select
+                    className="border rounded px-2 py-1"
+                    value={fileTypeFilter}
+                    onChange={(e) => setFileTypeFilter(e.target.value as "json" | "csv" | "any")}
+                    disabled={!projectId}
+                  >
+                    <option value="json">JSON only</option>
+                    <option value="csv">CSV only</option>
+                    <option value="any">Any file</option>
+                  </select>
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={hideStepFiles}
+                    onChange={(e) => setHideStepFiles(e.target.checked)}
+                    disabled={!projectId}
+                  />
+                  <span>Hide step* progress files</span>
+                </label>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <button
+                  type="button"
+                  className="border rounded px-3 py-2 bg-white hover:bg-blue-50 disabled:opacity-50"
+                  disabled={selectedDownloadCount === 0 || isDownloadingFiles || !projectId}
+                  onClick={() => void downloadSelectedFiles()}
+                >
+                  {isDownloadingFiles ? "Downloading..." : `Download selected (${selectedDownloadCount})`}
+                </button>
+                <div className="text-gray-600">
+                  Click a card or its checkbox to select. Hover the number to see the full filename.
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-72 overflow-y-auto">
+                {filteredFiles.map((file) => {
+                  const isSelected = selectedFilesForDownload.has(file);
+                  const shortLabel = getShortFileLabel(file);
+                  const baseClasses =
+                    "border rounded px-3 py-2 flex items-start justify-between gap-3 bg-white hover:bg-blue-50 transition-colors cursor-pointer";
+                  const selectedClasses = isSelected ? "border-blue-400 ring-1 ring-blue-200 bg-blue-50" : "";
+                  return (
+                    <div
+                      key={file}
+                      className={`${baseClasses} ${selectedClasses} group relative`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => toggleFileSelection(file)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          toggleFileSelection(file);
+                        }
+                      }}
+                      title={file}
+                    >
+                      <div className="flex items-start gap-2 min-w-0">
+                        <input
+                          type="checkbox"
+                          className="mt-1 h-4 w-4"
+                          checked={isSelected}
+                          onChange={() => toggleFileSelection(file)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold relative inline-flex items-center" title={file}>
+                              {shortLabel}
+                              <span className="absolute left-0 top-full mt-1 z-10 hidden group-hover:flex whitespace-pre rounded bg-gray-900 px-2 py-1 text-xs text-white shadow-lg">
+                                {file}
+                              </span>
+                            </span>
+                            <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-700">
+                              {getFileTypeLabel(file)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          className="border rounded p-1 bg-white hover:bg-blue-100"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openFile(file);
+                          }}
+                          title="View / edit"
+                          aria-label="View or edit file"
+                        >
+                          <EyeIcon className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          className="border rounded p-1 bg-white hover:bg-blue-100"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void downloadFile(file);
+                          }}
+                          title="Download"
+                          aria-label="Download file"
+                        >
+                          <DownloadIcon className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {availableFiles.length === 0 && (
+                  <div className="text-sm text-gray-500">No files found for this project yet.</div>
+                )}
+                {availableFiles.length > 0 && filteredFiles.length === 0 && (
+                  <div className="text-sm text-gray-500">No matches for &quot;{fileFilter}&quot;.</div>
+                )}
+              </div>
+            </section>
           </div>
         </div>
       </div>
@@ -1706,22 +2065,68 @@ export default function SemPage() {
           >
             <div className="flex items-center justify-between border-b px-4 py-3">
               <div className="min-w-0">
-                <div className="text-lg font-medium">JSON Viewer</div>
-                <div className="text-sm text-gray-600 truncate">{selectedFile}</div>
+                <div className="text-lg font-medium">File viewer & editor</div>
+                <div className="flex items-center gap-2 text-sm text-gray-600 truncate">
+                  <span className="truncate">{selectedFile}</span>
+                  {fileContentMeta?.isJson && <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-800">JSON</span>}
+                </div>
               </div>
-              <button className="border rounded px-3 py-2" onClick={closeFileViewer}>
-                Close
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  className="border rounded px-3 py-2 text-sm bg-white hover:bg-blue-50"
+                  onClick={() => void downloadFile(selectedFile)}
+                >
+                  Download
+                </button>
+                <button className="border rounded px-3 py-2" onClick={closeFileViewer}>
+                  Close
+                </button>
+              </div>
             </div>
-            <div className="p-4 bg-gray-50 max-h-[70vh] overflow-y-auto">
+            <div className="p-4 bg-gray-50 max-h-[70vh] overflow-y-auto space-y-3">
               {isLoadingFileContent && <div className="text-sm text-gray-600">Loading...</div>}
-              {!isLoadingFileContent && fileViewerError && (
-                <div className="text-sm text-red-600">{fileViewerError}</div>
-              )}
-              {!isLoadingFileContent && !fileViewerError && (
-                <pre className="text-xs whitespace-pre-wrap">
-                  {selectedFileContent === null ? "No content" : JSON.stringify(selectedFileContent, null, 2)}
-                </pre>
+              {!isLoadingFileContent && (
+                <>
+                  {fileViewerError && <div className="text-sm text-red-600">{fileViewerError}</div>}
+                  {fileViewerMessage && <div className="text-sm text-green-700">{fileViewerMessage}</div>}
+                  <div className="flex items-center gap-2">
+                    {fileContentMeta?.isJson && (
+                      <button
+                        type="button"
+                        className="border rounded px-3 py-2 text-sm bg-white hover:bg-blue-50 disabled:opacity-50"
+                        onClick={formatJsonContent}
+                        disabled={isSavingFileContent}
+                      >
+                        Format JSON
+                      </button>
+                    )}
+                    <div className="text-xs text-gray-600">
+                      Edit the text below and hit save to write directly to the output folder.
+                    </div>
+                  </div>
+                  <textarea
+                    value={selectedFileContent}
+                    onChange={(e) => setSelectedFileContent(e.target.value)}
+                    className="w-full h-96 border rounded px-3 py-2 text-sm font-mono bg-white"
+                    spellCheck={false}
+                  />
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      className="border rounded px-3 py-2 bg-white hover:bg-gray-100"
+                      onClick={closeFileViewer}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="border rounded px-3 py-2 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                      onClick={() => void saveFileEdits()}
+                      disabled={isSavingFileContent}
+                    >
+                      {isSavingFileContent ? "Saving..." : "Save changes"}
+                    </button>
+                  </div>
+                </>
               )}
             </div>
           </div>

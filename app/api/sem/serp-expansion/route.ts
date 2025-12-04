@@ -112,7 +112,6 @@ export async function POST(req: Request) {
           {
             keyword,
             location_code: 2458,
-            language_code: "en",
             device: "mobile",
             os: "android",
             depth: 10,

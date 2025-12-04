@@ -226,6 +226,9 @@ export interface DataForSeoSearchVolumeTask {
 export interface CampaignPlanKeyword {
   Keyword: string;
   MatchType: string;
+  AvgMonthlySearches?: number | null;
+  CPC?: number | null;
+  CompetitionIndex?: number | null;
 }
 
 export interface CampaignPlanTargeting {

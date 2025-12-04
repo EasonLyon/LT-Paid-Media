@@ -360,7 +360,6 @@ DATAFORSEO_PASSWORD=your_password
 ```tsx
 interface DataForSEOSearchVolumeTask {
   location_code: number;  // e.g. 2458
-  language_code: string;  // e.g. "en"
   keywords: string[];     // flat array of all valid keywords
   sort_by: "search_volume";
 }
@@ -375,7 +374,6 @@ Concrete example (TypeScript + axios or fetch):
 const tasks: DataForSEOSearchVolumeRequestBody = [
   {
     location_code: 2458,         // Malaysia
-    language_code: "en",
     keywords: validKeywordsBatch, // up to 1000 items
     sort_by: "search_volume",
   },
@@ -677,7 +675,6 @@ DATAFORSEO_PASSWORD=your_password
 interface SerpTask {
   keyword: string;
   location_code: number;          // e.g. 2458 (Malaysia)
-  language_code: string;          // e.g. "en"
   device: "desktop" | "mobile";   // here: "mobile"
   os: "windows" | "macos" | "android" | "ios"; // here: "android"
   depth: number;                  // e.g. 10 (number of results pages/blocks)
@@ -695,7 +692,6 @@ const tasks: SerpRequestBody = [
   {
     keyword: seedKeyword,       // e.g. "confinement centre Kuala Lumpur"
     location_code: 2458,
-    language_code: "en",
     device: "mobile",
     os: "android",
     depth: 10,

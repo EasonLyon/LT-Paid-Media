@@ -5,7 +5,7 @@ import { CampaignPlanPayload, NormalizedProjectInitInput } from "@/types/sem";
 import { ensureProjectFolder, readProjectJson, writeProjectJson } from "../storage/project-files";
 
 const PROMPT_ID = "pmpt_69306275f10c8197b1310916806b42490e59ebe827e88503";
-const PROMPT_VERSION = "4";
+const PROMPT_VERSION = "5";
 const INPUT_FILE = "00-user-input.json";
 const KEYWORD_CSV_FILE = "09-google-ads-campaign-structure.csv";
 const OUTPUT_FILE = "campaign-plan.json";
@@ -116,20 +116,30 @@ export async function generateCampaignPlan(projectId: string) {
     const campaignIndex = (campaignIdx + 1).toString().padStart(2, "0");
     const marker = "AI | ";
     const campaignName = campaign?.CampaignName ?? "";
-    const hasMarker = campaignName.includes(marker);
-    const alreadyIndexed = /\bAI \|\s*\d{2}\b/.test(campaignName);
-    const updatedCampaignName = hasMarker
-      ? alreadyIndexed
-        ? campaignName
-        : campaignName.replace(marker, `${marker}${campaignIndex} `)
-      : `${campaignIndex} ${campaignName}`.trim();
+
+    const normalizeNameWithIndex = (name: string, index: string, hasMarker: boolean) => {
+      const prefix = hasMarker ? marker : "";
+      const afterMarker = hasMarker ? name.replace(/^AI \|\s*/, "") : name;
+      const match = afterMarker.match(/^(\d{1,2})(?:\s*\|\s*)?(.*)$/);
+
+      if (match) {
+        const [, existingIndex, restRaw] = match;
+        const normalizedIndex = existingIndex.padStart(2, "0");
+        const rest = (restRaw ?? "").trim();
+        return `${prefix}${normalizedIndex}${rest ? ` | ${rest}` : ""}`;
+      }
+
+      const rest = afterMarker.trim();
+      return `${prefix}${index}${rest ? ` | ${rest}` : ""}`;
+    };
+
+    const updatedCampaignName = normalizeNameWithIndex(campaignName, campaignIndex, campaignName.startsWith(marker));
 
     const adGroups = Array.isArray(campaign?.AdGroups) ? campaign.AdGroups : [];
     const indexedAdGroups = adGroups.map((group, groupIdx) => {
       const groupIndex = (groupIdx + 1).toString().padStart(2, "0");
       const groupName = group?.AdGroupName ?? "";
-      const alreadyHasIndex = /^\d{2}\b/.test(groupName);
-      const updatedAdGroupName = alreadyHasIndex ? groupName : `${groupIndex} ${groupName}`.trim();
+      const updatedAdGroupName = normalizeNameWithIndex(groupName, groupIndex, false);
       return { ...group, AdGroupName: updatedAdGroupName };
     });
 
