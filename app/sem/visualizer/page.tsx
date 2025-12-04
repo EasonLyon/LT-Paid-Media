@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CampaignPlan, CampaignPlanAdGroup, CampaignPlanKeyword, NormalizedProjectInitInput } from "@/types/sem";
 
 type ViewMode = "hierarchy" | "tables" | "performance";
@@ -266,7 +266,7 @@ function downloadCsv(rows: Array<Record<string, string | number | boolean | null
   URL.revokeObjectURL(url);
 }
 
-export default function CampaignVisualizerPage() {
+function CampaignVisualizerPageContent() {
   const searchParams = useSearchParams();
   const [projectIdInput, setProjectIdInput] = useState<string>("");
   const [campaigns, setCampaigns] = useState<CampaignPlan[]>([]);
@@ -322,7 +322,7 @@ export default function CampaignVisualizerPage() {
   const monthlySpendSliderMin = 1000;
   const [mermaidSvg, setMermaidSvg] = useState<string>("");
   const [mermaidError, setMermaidError] = useState<string | null>(null);
-  const mermaidRef = useRef<typeof import("mermaid") | null>(null);
+  const mermaidRef = useRef<typeof import("mermaid").default | null>(null);
   const mermaidRenderId = useRef(0);
   const [salesValueAutoSet, setSalesValueAutoSet] = useState(false);
   const [monthlySpendInput, setMonthlySpendInput] = useState<string>("");
@@ -625,8 +625,7 @@ export default function CampaignVisualizerPage() {
       try {
         const node = (id: string, label: string) => `${id}["${label.replace(/"/g, "'")}"]`;
         if (!mermaidRef.current) {
-          const imported = (await import("mermaid")) as unknown;
-          const lib = (imported as { default?: typeof import("mermaid") }).default ?? (imported as typeof import("mermaid"));
+          const { default: lib } = await import("mermaid");
           lib.initialize({ startOnLoad: false, theme: "base" });
           mermaidRef.current = lib;
         }
@@ -2246,6 +2245,14 @@ function AdGroupTabs({
         </div>
       )}
     </div>
+  );
+}
+
+export default function CampaignVisualizerPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading visualizer...</div>}>
+      <CampaignVisualizerPageContent />
+    </Suspense>
   );
 }
 
