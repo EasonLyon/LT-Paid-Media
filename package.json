@@ -11,6 +11,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.86.0",
     "axios": "^1.13.2",
+    "mermaid": "^11.12.2",
     "next": "16.0.7",
     "node-console-progress-bar-tqdm": "^1.0.4",
     "openai": "^6.9.1",

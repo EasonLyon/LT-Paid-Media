@@ -1,13 +1,20 @@
 import fs from "fs/promises";
 import path from "path";
 import { NextResponse } from "next/server";
-import { CampaignPlan, CampaignPlanKeyword, CampaignPlanPayload, ScoredKeywordRecord } from "@/types/sem";
+import {
+  CampaignPlan,
+  CampaignPlanKeyword,
+  CampaignPlanPayload,
+  NormalizedProjectInitInput,
+  ScoredKeywordRecord,
+} from "@/types/sem";
 import { ensureProjectFolder, listOutputProjects, projectFilePath, readProjectJson } from "@/lib/storage/project-files";
 
 const SAFE_NAME = /^[a-zA-Z0-9._-]+$/;
 const PLAN_PREFIX = "10-";
 const ENRICHED_PREFIX = "11-";
 const ENRICHED_NAME = `${ENRICHED_PREFIX}campaign-plan-enriched.json`;
+const USER_INPUT_FILE = "00-user-input.json";
 
 type PlanSource = "enriched" | "base";
 
@@ -104,6 +111,16 @@ async function loadKeywordMetrics(projectId: string): Promise<Map<string, Scored
   return map;
 }
 
+async function loadNormalizedInput(projectId: string): Promise<NormalizedProjectInitInput | null> {
+  try {
+    const stored = await readProjectJson<{ normalizedInput?: NormalizedProjectInitInput }>(projectId, USER_INPUT_FILE);
+    return stored?.normalizedInput ?? null;
+  } catch (err) {
+    console.warn("[Step9][GET] unable to read normalized input", err);
+    return null;
+  }
+}
+
 function enrichKeyword(
   keyword: CampaignPlanKeyword,
   metricsMap: Map<string, ScoredKeywordRecord>,
@@ -181,6 +198,7 @@ export async function GET(req: Request) {
     const metricsMap = await loadKeywordMetrics(projectId);
     const enrichedCampaigns = enrichCampaigns(campaigns, metricsMap);
     const target = source === "enriched" ? { fileName, fullPath } : await writeEnrichedPlan(projectId, enrichedCampaigns);
+    const normalizedInput = await loadNormalizedInput(projectId);
 
     return NextResponse.json({
       projectId,
@@ -188,6 +206,7 @@ export async function GET(req: Request) {
       fileName: target.fileName,
       backupFileName,
       sourceFileName: fileName,
+      normalizedInput,
     });
   } catch (error: unknown) {
     console.error("[Step9][GET] failed", error);

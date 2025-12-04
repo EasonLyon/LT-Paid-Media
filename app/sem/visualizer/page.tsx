@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { CampaignPlan, CampaignPlanAdGroup, CampaignPlanKeyword } from "@/types/sem";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { CampaignPlan, CampaignPlanAdGroup, CampaignPlanKeyword, NormalizedProjectInitInput } from "@/types/sem";
 
-type ViewMode = "hierarchy" | "tables";
+type ViewMode = "hierarchy" | "tables" | "performance";
 type SortDirection = "asc" | "desc";
 
 interface CampaignRow {
@@ -48,6 +48,45 @@ interface KeywordRow {
   CompetitionIndex: number | null;
 }
 
+interface PerformanceCampaignRow {
+  CampaignName: string;
+  BudgetDailyMYR: number | null;
+  monthlySpend: number;
+  expectedAvgCpc: number;
+  estimatedClicks: number;
+  leadsWorst: number;
+  leadsMid: number;
+  leadsBest: number;
+  revenueWorst: number;
+  revenueMid: number;
+  revenueBest: number;
+  roiWorst: number;
+  roiMid: number;
+  roiBest: number;
+}
+
+interface PerformanceTotals {
+  totalMonthlySpend: number;
+  totalEstimatedClicks: number;
+  totalLeadsWorst: number;
+  totalLeadsMid: number;
+  totalLeadsBest: number;
+  totalRevenueWorst: number;
+  totalRevenueMid: number;
+  totalRevenueBest: number;
+  roiWorst: number;
+  roiMid: number;
+  roiBest: number;
+}
+
+interface PerformanceAssumptions {
+  averageCpc: number;
+  worstConversionRate: number;
+  bestConversionRate: number;
+  conversionValue: number;
+  daysPerMonth: number;
+}
+
 interface SortState<T extends string> {
   column: T;
   direction: SortDirection;
@@ -68,6 +107,8 @@ function EditableCell({
   const [draft, setDraft] = useState<string>(() => (value ?? "").toString());
 
   useEffect(() => {
+    // Sync the latest cell value into the local draft when external data changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDraft(value === null || typeof value === "undefined" ? "" : value.toString());
   }, [value]);
 
@@ -151,6 +192,16 @@ function formatCurrency(value: number | null): string {
   return `RM ${value.toLocaleString("en-MY", { maximumFractionDigits: 2 })}`;
 }
 
+function formatCurrencyCompact(value: number | null): string {
+  if (value === null || typeof value === "undefined" || Number.isNaN(value)) return "—";
+  return new Intl.NumberFormat("en", {
+    style: "currency",
+    currency: "MYR",
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
 function formatCpc(value: number | null): string {
   if (value === null || typeof value === "undefined" || Number.isNaN(value)) return "—";
   return value.toLocaleString("en-MY", { maximumFractionDigits: 2 });
@@ -165,6 +216,17 @@ function formatDecimal(value: number | null, fractionDigits = 2): string {
   if (value === null || typeof value === "undefined" || Number.isNaN(value)) return "—";
   return value.toLocaleString("en-MY", { maximumFractionDigits: fractionDigits, minimumFractionDigits: 0 });
 }
+
+function formatPercent(value: number | null, fractionDigits = 1): string {
+  if (value === null || typeof value === "undefined" || Number.isNaN(value)) return "—";
+  return `${value.toFixed(fractionDigits)}%`;
+}
+
+const DEFAULT_AVG_CPC = 2.5;
+const DEFAULT_WORST_CONV = 1;
+const DEFAULT_BEST_CONV = 10;
+const DEFAULT_CONVERSION_VALUE = 100;
+const DEFAULT_DAYS_PER_MONTH = 30;
 
 function computeKeywordAverages(list: Array<Pick<CampaignPlanKeyword, "AvgMonthlySearches" | "CPC" | "CompetitionIndex">>) {
   const avg = (values: Array<number | null | undefined>) => {
@@ -208,7 +270,7 @@ export default function CampaignVisualizerPage() {
   const searchParams = useSearchParams();
   const [projectIdInput, setProjectIdInput] = useState<string>("");
   const [campaigns, setCampaigns] = useState<CampaignPlan[]>([]);
-  const [viewMode, setViewMode] = useState<ViewMode>("hierarchy");
+  const [viewMode, setViewMode] = useState<ViewMode>("performance");
   const [fileName, setFileName] = useState<string | null>(null);
   const [backupFileName, setBackupFileName] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>("");
@@ -244,6 +306,51 @@ export default function CampaignVisualizerPage() {
     minCpc: "",
     maxCpc: "",
   });
+  const [normalizedInput, setNormalizedInput] = useState<NormalizedProjectInitInput | null>(null);
+  const [assumptions, setAssumptions] = useState<PerformanceAssumptions>({
+    averageCpc: DEFAULT_AVG_CPC,
+    worstConversionRate: DEFAULT_WORST_CONV,
+    bestConversionRate: DEFAULT_BEST_CONV,
+    conversionValue: DEFAULT_CONVERSION_VALUE,
+    daysPerMonth: DEFAULT_DAYS_PER_MONTH,
+  });
+  const [performanceSort, setPerformanceSort] = useState<SortState<keyof PerformanceCampaignRow>>({
+    column: "monthlySpend",
+    direction: "desc",
+  });
+  const [monthlySpendOverride, setMonthlySpendOverride] = useState<number | null>(null);
+  const monthlySpendSliderMin = 1000;
+  const [mermaidSvg, setMermaidSvg] = useState<string>("");
+  const [mermaidError, setMermaidError] = useState<string | null>(null);
+  const mermaidRef = useRef<typeof import("mermaid") | null>(null);
+  const mermaidRenderId = useRef(0);
+  const [salesValueAutoSet, setSalesValueAutoSet] = useState(false);
+  const [monthlySpendInput, setMonthlySpendInput] = useState<string>("");
+
+  const updateAssumption = (key: keyof PerformanceAssumptions, rawValue: number) => {
+    setAssumptions((prev) => {
+      const value = Number.isFinite(rawValue) ? rawValue : (prev[key] as number);
+      if (key === "worstConversionRate") {
+        const clamped = Math.min(Math.max(0.1, value), 15);
+        const bestAligned = Math.max(prev.bestConversionRate, clamped);
+        return { ...prev, worstConversionRate: clamped, bestConversionRate: bestAligned };
+      }
+      if (key === "bestConversionRate") {
+        const clamped = Math.min(Math.max(0.1, value), 15);
+        return { ...prev, bestConversionRate: Math.max(clamped, prev.worstConversionRate) };
+      }
+      if (key === "daysPerMonth") {
+        return { ...prev, daysPerMonth: Math.max(0, value) };
+      }
+      if (key === "averageCpc") {
+        return { ...prev, averageCpc: Math.max(0.1, value) };
+      }
+      if (key === "conversionValue") {
+        return { ...prev, conversionValue: Math.max(0, value) };
+      }
+      return { ...prev, [key]: value } as PerformanceAssumptions;
+    });
+  };
 
   const campaignRows = useMemo<CampaignRow[]>(() => {
     return campaigns.map((campaign, idx) => ({
@@ -319,6 +426,262 @@ export default function CampaignVisualizerPage() {
       }),
     );
   }, [campaigns]);
+
+  const averageAdGroupCpc = useMemo(() => {
+    const cpcs: number[] = [];
+    campaigns.forEach((campaign) => {
+      (campaign.AdGroups ?? []).forEach((group) => {
+        const cpc = group.DefaultMaxCPCMYR;
+        if (typeof cpc === "number" && Number.isFinite(cpc) && cpc > 0) {
+          cpcs.push(cpc);
+        }
+      });
+    });
+    if (!cpcs.length) return null;
+    const avg = cpcs.reduce((sum, val) => sum + val, 0) / cpcs.length;
+    return Number.isFinite(avg) ? avg : null;
+  }, [campaigns]);
+
+  useEffect(() => {
+    if (averageAdGroupCpc === null) return;
+    setAssumptions((prev) => {
+      if (prev.averageCpc !== DEFAULT_AVG_CPC) return prev;
+      return { ...prev, averageCpc: averageAdGroupCpc };
+    });
+  }, [averageAdGroupCpc]);
+
+  const baseMonthlySpendByCampaign = useMemo(() => {
+    const days = Math.max(0, assumptions.daysPerMonth);
+    return campaigns.map((campaign) => Math.max(0, (campaign.BudgetDailyMYR ?? 0) * days));
+  }, [assumptions.daysPerMonth, campaigns]);
+
+  const baseMonthlySpendTotal = useMemo(
+    () => baseMonthlySpendByCampaign.reduce((sum, spend) => sum + spend, 0),
+    [baseMonthlySpendByCampaign],
+  );
+
+  useEffect(() => {
+    if (monthlySpendOverride !== null) return;
+    const defaultSpend = Math.max(baseMonthlySpendTotal, monthlySpendSliderMin);
+    if (defaultSpend > 0) setMonthlySpendOverride(defaultSpend);
+  }, [baseMonthlySpendTotal, monthlySpendOverride]);
+
+  const monthlySpendSliderMax = useMemo(() => {
+    const base = Math.max(baseMonthlySpendTotal, monthlySpendSliderMin);
+    return Math.round(base * 10);
+  }, [baseMonthlySpendTotal, monthlySpendSliderMin]);
+
+  useEffect(() => {
+    setMonthlySpendOverride((prev) => {
+      const next = prev ?? Math.max(baseMonthlySpendTotal, monthlySpendSliderMin);
+      return Math.min(Math.max(monthlySpendSliderMin, next), monthlySpendSliderMax);
+    });
+    setMonthlySpendInput((prev) => {
+      if (prev) return prev;
+      const next = monthlySpendOverride ?? Math.max(baseMonthlySpendTotal, monthlySpendSliderMin);
+      return next ? Math.round(next).toString() : "";
+    });
+  }, [baseMonthlySpendTotal, monthlySpendSliderMax, monthlySpendSliderMin]);
+
+  const clampMonthlySpend = (value: number) =>
+    Math.min(Math.max(monthlySpendSliderMin, value), monthlySpendSliderMax);
+
+  const effectiveMonthlySpend = useMemo(
+    () => (monthlySpendOverride === null ? Math.max(baseMonthlySpendTotal, monthlySpendSliderMin) : monthlySpendOverride),
+    [baseMonthlySpendTotal, monthlySpendOverride, monthlySpendSliderMin],
+  );
+
+  useEffect(() => {
+    setMonthlySpendInput(Math.round(effectiveMonthlySpend).toString());
+  }, [effectiveMonthlySpend]);
+
+  const monthlySpendSliderStep = 100;
+
+  const performanceRows = useMemo<PerformanceCampaignRow[]>(() => {
+    const worstRate = Math.max(0.001, assumptions.worstConversionRate) / 100;
+    const bestRate = Math.max(worstRate, Math.max(0.001, assumptions.bestConversionRate) / 100);
+    const midRate = (worstRate + bestRate) / 2;
+    const expectedCpc = assumptions.averageCpc > 0 ? assumptions.averageCpc : DEFAULT_AVG_CPC;
+    const conversionValue = Math.max(0, assumptions.conversionValue);
+    const spendScale =
+      baseMonthlySpendTotal > 0 && Number.isFinite(baseMonthlySpendTotal)
+        ? effectiveMonthlySpend / baseMonthlySpendTotal
+        : null;
+    const evenSplit = campaigns.length > 0 ? effectiveMonthlySpend / campaigns.length : 0;
+
+    return campaigns.map((campaign, idx) => {
+      const baseSpend = baseMonthlySpendByCampaign[idx] ?? 0;
+      const monthlySpend =
+        spendScale !== null
+          ? Math.max(0, Math.round(baseSpend * spendScale))
+          : Math.max(0, Math.round(evenSplit));
+      const estimatedClicks = expectedCpc > 0 ? Math.round(monthlySpend / expectedCpc) : 0;
+      const leadsWorst = Math.round(estimatedClicks * worstRate);
+      const leadsMid = Math.round(estimatedClicks * midRate);
+      const leadsBest = Math.round(estimatedClicks * bestRate);
+      const revenueWorst = Math.round(leadsWorst * conversionValue);
+      const revenueMid = Math.round(leadsMid * conversionValue);
+      const revenueBest = Math.round(leadsBest * conversionValue);
+      const roiWorst = monthlySpend > 0 ? ((revenueWorst - monthlySpend) / monthlySpend) * 100 : 0;
+      const roiMid = monthlySpend > 0 ? ((revenueMid - monthlySpend) / monthlySpend) * 100 : 0;
+      const roiBest = monthlySpend > 0 ? ((revenueBest - monthlySpend) / monthlySpend) * 100 : 0;
+
+      return {
+        CampaignName: campaign.CampaignName ?? "Campaign",
+        BudgetDailyMYR: campaign.BudgetDailyMYR ?? null,
+        monthlySpend,
+        expectedAvgCpc: expectedCpc,
+        estimatedClicks,
+        leadsWorst,
+        leadsMid,
+        leadsBest,
+        revenueWorst,
+        revenueMid,
+        revenueBest,
+        roiWorst,
+        roiMid,
+        roiBest,
+      };
+    });
+  }, [assumptions, baseMonthlySpendByCampaign, baseMonthlySpendTotal, campaigns, effectiveMonthlySpend]);
+
+  const performanceTotals = useMemo<PerformanceTotals>(() => {
+    if (!performanceRows.length) {
+      return {
+        totalMonthlySpend: 0,
+        totalEstimatedClicks: 0,
+        totalLeadsWorst: 0,
+        totalLeadsMid: 0,
+        totalLeadsBest: 0,
+        totalRevenueWorst: 0,
+        totalRevenueMid: 0,
+        totalRevenueBest: 0,
+        roiWorst: 0,
+        roiMid: 0,
+        roiBest: 0,
+      };
+    }
+
+    const totalMonthlySpend = performanceRows.reduce((sum, row) => sum + row.monthlySpend, 0);
+    const totalEstimatedClicks = performanceRows.reduce((sum, row) => sum + row.estimatedClicks, 0);
+    const totalLeadsWorst = performanceRows.reduce((sum, row) => sum + row.leadsWorst, 0);
+    const totalLeadsMid = performanceRows.reduce((sum, row) => sum + row.leadsMid, 0);
+    const totalLeadsBest = performanceRows.reduce((sum, row) => sum + row.leadsBest, 0);
+    const totalRevenueWorst = performanceRows.reduce((sum, row) => sum + row.revenueWorst, 0);
+    const totalRevenueMid = performanceRows.reduce((sum, row) => sum + row.revenueMid, 0);
+    const totalRevenueBest = performanceRows.reduce((sum, row) => sum + row.revenueBest, 0);
+    const roiWorst = totalMonthlySpend > 0 ? ((totalRevenueWorst - totalMonthlySpend) / totalMonthlySpend) * 100 : 0;
+    const roiMid = totalMonthlySpend > 0 ? ((totalRevenueMid - totalMonthlySpend) / totalMonthlySpend) * 100 : 0;
+    const roiBest = totalMonthlySpend > 0 ? ((totalRevenueBest - totalMonthlySpend) / totalMonthlySpend) * 100 : 0;
+
+    return {
+      totalMonthlySpend,
+      totalEstimatedClicks,
+      totalLeadsWorst,
+      totalLeadsMid,
+      totalLeadsBest,
+      totalRevenueWorst,
+      totalRevenueMid,
+      totalRevenueBest,
+      roiWorst,
+      roiMid,
+      roiBest,
+    };
+  }, [performanceRows]);
+
+  const breakevenSalesValue = useMemo(() => {
+    if (performanceTotals.totalLeadsWorst <= 0) return null;
+    return performanceTotals.totalMonthlySpend / performanceTotals.totalLeadsWorst;
+  }, [performanceTotals.totalLeadsWorst, performanceTotals.totalMonthlySpend]);
+
+  useEffect(() => {
+    if (salesValueAutoSet || breakevenSalesValue === null) return;
+    setAssumptions((prev) => {
+      if (prev.conversionValue !== DEFAULT_CONVERSION_VALUE) return prev;
+      const suggested = Math.round((breakevenSalesValue * 1.2) / 10) * 10;
+      const clamped = Math.min(1000, Math.max(10, suggested));
+      return { ...prev, conversionValue: clamped };
+    });
+    setSalesValueAutoSet(true);
+  }, [breakevenSalesValue, salesValueAutoSet]);
+
+  const sortedPerformanceRows = useMemo(() => {
+    const sorted = [...performanceRows].sort((a, b) => {
+      const dir = performanceSort.direction === "asc" ? 1 : -1;
+      const av = a[performanceSort.column];
+      const bv = b[performanceSort.column];
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    });
+    return sorted;
+  }, [performanceRows, performanceSort]);
+
+  useEffect(() => {
+    const renderDiagram = async () => {
+      if (!performanceRows.length || performanceTotals.totalMonthlySpend <= 0) {
+        setMermaidSvg("");
+        return;
+      }
+      try {
+        const node = (id: string, label: string) => `${id}["${label.replace(/"/g, "'")}"]`;
+        if (!mermaidRef.current) {
+          const imported = (await import("mermaid")) as unknown;
+          const lib = (imported as { default?: typeof import("mermaid") }).default ?? (imported as typeof import("mermaid"));
+          lib.initialize({ startOnLoad: false, theme: "base" });
+          mermaidRef.current = lib;
+        }
+        const worstRateLabel = Math.abs(assumptions.worstConversionRate).toFixed(1);
+        const bestRateLabel = Math.abs(assumptions.bestConversionRate).toFixed(1);
+        const midRateLabel = Math.abs((assumptions.worstConversionRate + assumptions.bestConversionRate) / 2).toFixed(1);
+        const spendLabel = formatCurrency(performanceTotals.totalMonthlySpend);
+        const clicksLabel = formatNumber(Math.round(performanceTotals.totalEstimatedClicks));
+        const worstLeadsLabel = formatNumber(Math.round(performanceTotals.totalLeadsWorst));
+        const midLeadsLabel = formatNumber(Math.round(performanceTotals.totalLeadsMid));
+        const bestLeadsLabel = formatNumber(Math.round(performanceTotals.totalLeadsBest));
+        const worstRevenueLabel = formatCurrency(performanceTotals.totalRevenueWorst);
+        const midRevenueLabel = formatCurrency(performanceTotals.totalRevenueMid);
+        const bestRevenueLabel = formatCurrency(performanceTotals.totalRevenueBest);
+        const roiWorstLabel = formatPercent(performanceTotals.roiWorst);
+        const roiMidLabel = formatPercent(performanceTotals.roiMid);
+        const roiBestLabel = formatPercent(performanceTotals.roiBest);
+
+        const diagram = [
+          "flowchart LR",
+          node("spend", `Ad Spend: ${spendLabel}`),
+          node("clicks", `Clicks: ${clicksLabel}`),
+          node("worstLeads", `Worst leads (${worstRateLabel}%): ${worstLeadsLabel}`),
+          node("midLeads", `Mid leads (${midRateLabel}%): ${midLeadsLabel}`),
+          node("bestLeads", `Best leads (${bestRateLabel}%): ${bestLeadsLabel}`),
+          node("worstRevenue", `Revenue worst: ${worstRevenueLabel}`),
+          node("midRevenue", `Revenue mid: ${midRevenueLabel}`),
+          node("bestRevenue", `Revenue best: ${bestRevenueLabel}`),
+          node("worstRoi", `ROI worst: ${roiWorstLabel}`),
+          node("midRoi", `ROI mid: ${roiMidLabel}`),
+          node("bestRoi", `ROI best: ${roiBestLabel}`),
+          "spend --> clicks",
+          "clicks --> worstLeads",
+          "clicks --> midLeads",
+          "clicks --> bestLeads",
+          "worstLeads --> worstRevenue",
+          "midLeads --> midRevenue",
+          "bestLeads --> bestRevenue",
+          "worstRevenue --> worstRoi",
+          "midRevenue --> midRoi",
+          "bestRevenue --> bestRoi",
+        ].join("\n");
+
+        const renderId = `perf-${mermaidRenderId.current++}`;
+        const { svg } = await mermaidRef.current.render(renderId, diagram);
+        setMermaidSvg(svg);
+        setMermaidError(null);
+      } catch (err) {
+        console.error("[PerformanceCalculator] Mermaid render failed", err);
+        setMermaidError("Unable to render funnel diagram");
+      }
+    };
+
+    void renderDiagram();
+  }, [assumptions.bestConversionRate, assumptions.worstConversionRate, performanceRows, performanceTotals]);
 
   const filteredCampaigns = useMemo(() => {
     const sorted = [...campaignRows].sort((a, b) => {
@@ -418,6 +781,7 @@ export default function CampaignVisualizerPage() {
         fileName?: string;
         backupFileName?: string;
         error?: string;
+        normalizedInput?: NormalizedProjectInitInput | null;
       };
       if (!res.ok) {
         throw new Error(json.error || res.statusText);
@@ -435,6 +799,9 @@ export default function CampaignVisualizerPage() {
       setExpandedCampaigns({});
       setFileName(json.fileName ?? null);
       setBackupFileName(json.backupFileName ?? null);
+      setNormalizedInput(json.normalizedInput ?? null);
+      setSalesValueAutoSet(false);
+      setMonthlySpendOverride(null);
       setStatusMessage(
         `Loaded ${json.campaigns?.length ?? 0} campaign(s) from ${json.fileName ?? "10/11-*.json"}. Backup: ${
           json.backupFileName ?? "n/a"
@@ -444,6 +811,7 @@ export default function CampaignVisualizerPage() {
       const message = error instanceof Error ? error.message : "Unable to load plan";
       setStatusMessage(message);
       setCampaigns([]);
+      setNormalizedInput(null);
     } finally {
       setIsLoading(false);
     }
@@ -654,20 +1022,387 @@ export default function CampaignVisualizerPage() {
             <span className="font-medium">Views</span>
             <button
               type="button"
-              className={`px-3 py-1 rounded border ${viewMode === "hierarchy" ? "bg-blue-600 text-white" : "bg-white"}`}
-              onClick={() => setViewMode("hierarchy")}
+              className={`px-3 py-1 rounded border ${viewMode === "performance" ? "bg-blue-600 text-white" : "bg-white"}`}
+              onClick={() => setViewMode("performance")}
             >
-              Hierarchical (default)
+              Performance calculator (default)
             </button>
             <button
               type="button"
-                      className={`px-3 py-1 rounded border ${viewMode === "tables" ? "bg-blue-600 text-white" : "bg-white"}`}
-                      onClick={() => setViewMode("tables")}
-                    >
-                      Tables for QA & export
-                    </button>
+              className={`px-3 py-1 rounded border ${viewMode === "hierarchy" ? "bg-blue-600 text-white" : "bg-white"}`}
+              onClick={() => setViewMode("hierarchy")}
+            >
+              Hierarchical view
+            </button>
+            <button
+              type="button"
+              className={`px-3 py-1 rounded border ${viewMode === "tables" ? "bg-blue-600 text-white" : "bg-white"}`}
+              onClick={() => setViewMode("tables")}
+            >
+              Tables for QA & export
+            </button>
+          </div>
+        </section>
+
+        {viewMode === "performance" && (
+          <section className="bg-white border rounded-lg p-4 space-y-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold">Performance calculator</h2>
+                <p className="text-sm text-gray-600">
+                  Forecast clicks, leads, revenue, and ROI using 00-user-input and 10/11 campaign plan budgets.
+                </p>
+              </div>
+              <div className="flex flex-col items-end gap-1 text-sm">
+                <span className="px-2 py-1 rounded bg-gray-100 text-gray-800">
+                  Step 1 budget: {normalizedInput ? formatCurrency(normalizedInput.monthly_adspend_myr) : "—"}
+                </span>
+                <span className="px-2 py-1 rounded bg-blue-50 text-blue-800">
+                  Campaign spend ×{assumptions.daysPerMonth}d: {formatCurrency(performanceTotals.totalMonthlySpend)}
+                </span>
+              </div>
+            </div>
+            {!campaigns.length ? (
+              <div className="text-sm text-gray-600">
+                Load a project to pull budgets from 00/11 JSON before using the calculator.
+              </div>
+            ) : (
+              <>
+                <div className="border rounded-lg bg-gray-50 p-4">
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <div className="text-sm font-semibold" title="Ad spend flowing into clicks, leads, revenue, and ROI">
+                      Performance funnel
+                    </div>
+                    {mermaidError && (
+                      <span className="text-xs text-red-700 bg-red-50 px-2 py-1 rounded border border-red-200">
+                        {mermaidError}
+                      </span>
+                    )}
                   </div>
-                </section>
+                  {mermaidSvg ? (
+                    <div className="overflow-auto min-h-[260px]" dangerouslySetInnerHTML={{ __html: mermaidSvg }} />
+                  ) : (
+                    <div className="text-sm text-gray-700">Load budgets or adjust sliders to see the funnel.</div>
+                  )}
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                  <label className="border rounded-lg p-3 bg-gray-50 space-y-2">
+                    <div className="flex items-center justify-between text-sm font-medium" title="Model different total budgets to see how traffic, leads, and revenue scale. Defaults to your campaign budgets.">
+                      <span>Monthly ad spend (MYR)</span>
+                      <span className="text-xs font-semibold px-2 py-1 rounded bg-blue-50 text-blue-800">
+                        {formatCurrency(Math.round(effectiveMonthlySpend))}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={monthlySpendSliderMin}
+                      max={monthlySpendSliderMax}
+                      step={monthlySpendSliderStep}
+                      className="w-full accent-blue-600"
+                      value={effectiveMonthlySpend}
+                      onChange={(e) => {
+                        const next = clampMonthlySpend(Number(e.target.value));
+                        setMonthlySpendOverride(next);
+                        setMonthlySpendInput(Math.round(next).toString());
+                      }}
+                    />
+                    <input
+                      type="number"
+                      min={monthlySpendSliderMin}
+                      max={monthlySpendSliderMax}
+                      step={monthlySpendSliderStep}
+                      className="border rounded px-2 py-1 text-sm w-full"
+                      value={monthlySpendInput}
+                      onChange={(e) => setMonthlySpendInput(e.target.value)}
+                      onBlur={() => {
+                        const parsed = Number(monthlySpendInput);
+                        if (!Number.isFinite(parsed)) {
+                          setMonthlySpendInput(Math.round(effectiveMonthlySpend).toString());
+                          return;
+                        }
+                        const next = clampMonthlySpend(parsed);
+                        setMonthlySpendOverride(next);
+                        setMonthlySpendInput(Math.round(next).toString());
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          const parsed = Number(monthlySpendInput);
+                          if (!Number.isFinite(parsed)) return;
+                          const next = clampMonthlySpend(parsed);
+                          setMonthlySpendOverride(next);
+                          setMonthlySpendInput(Math.round(next).toString());
+                        }
+                      }}
+                      title="Type to set monthly ad spend directly"
+                    />
+                    <div className="flex items-center justify-between text-xs text-gray-600">
+                      <span>Min {formatCurrency(monthlySpendSliderMin)}</span>
+                      <span>Max {formatCurrency(monthlySpendSliderMax)}</span>
+                    </div>
+                  </label>
+
+                  <label className="border rounded-lg p-3 bg-gray-50 space-y-2">
+                    <div className="flex items-center justify-between text-sm font-medium" title="Global average CPC applied to all campaigns. Slide to test cheaper or more expensive clicks.">
+                      <span>Global avg CPC (MYR)</span>
+                      <span className="text-xs font-semibold px-2 py-1 rounded bg-blue-50 text-blue-800">
+                        RM {assumptions.averageCpc.toFixed(2)}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.1}
+                      max={10}
+                      step={0.1}
+                      className="w-full accent-blue-600"
+                      value={assumptions.averageCpc}
+                      onChange={(e) => updateAssumption("averageCpc", Number(e.target.value))}
+                    />
+                    <div className="text-xs text-gray-600">
+                      Defaults to ad group avg{averageAdGroupCpc ? ` (RM ${averageAdGroupCpc.toFixed(2)})` : ""}.
+                    </div>
+                  </label>
+
+                  <label className="border rounded-lg p-3 bg-gray-50 space-y-2">
+                    <div className="flex items-center justify-between text-sm font-medium" title="Set worst and best conversion rates to bound expected performance.">
+                      <span>Conv. Rate (%)</span>
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="px-2 py-1 rounded bg-amber-50 text-amber-800 font-semibold">
+                          {assumptions.worstConversionRate.toFixed(1)}%
+                        </span>
+                        <span className="px-2 py-1 rounded bg-green-50 text-green-800 font-semibold">
+                          {assumptions.bestConversionRate.toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                    <div className="relative pt-2 pb-3">
+                      <div className="h-2 bg-gray-200 rounded-full relative overflow-hidden">
+                        <div
+                          className="absolute top-0 h-full rounded-full bg-gradient-to-r from-amber-300 via-blue-300 to-green-300"
+                          style={{
+                            left: `${((assumptions.worstConversionRate - 0.1) / (15 - 0.1)) * 100}%`,
+                            right: `${100 - ((assumptions.bestConversionRate - 0.1) / (15 - 0.1)) * 100}%`,
+                          }}
+                        />
+                      </div>
+                      <input
+                        type="range"
+                        min={0.1}
+                        max={15}
+                        step={0.1}
+                        className="w-full accent-amber-600 relative z-10 dual-range"
+                        value={assumptions.worstConversionRate}
+                        onChange={(e) => updateAssumption("worstConversionRate", Number(e.target.value))}
+                      />
+                      <input
+                        type="range"
+                        min={0.1}
+                        max={15}
+                        step={0.1}
+                        className="w-full accent-green-600 absolute inset-0 dual-range"
+                        value={assumptions.bestConversionRate}
+                        onChange={(e) => updateAssumption("bestConversionRate", Number(e.target.value))}
+                      />
+                      <div className="flex justify-between text-xs text-gray-600 mt-2">
+                        <span className="px-2 py-1 rounded bg-amber-50 text-amber-800">Worst</span>
+                        <span className="px-2 py-1 rounded bg-green-50 text-green-800">Best</span>
+                      </div>
+                    </div>
+                  </label>
+
+                  <label className="border rounded-lg p-3 bg-gray-50 space-y-2">
+                    <div className="flex items-center justify-between text-sm font-medium" title="Adjust value per lead (Sales Value) and set the number of active days.">
+                      <span>Sales Value (MYR)</span>
+                      <span className="text-xs font-semibold px-2 py-1 rounded bg-blue-50 text-blue-800">
+                        RM {assumptions.conversionValue.toFixed(0)}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={10}
+                      max={1000}
+                      step={10}
+                      className="w-full accent-blue-600"
+                      value={assumptions.conversionValue}
+                      onChange={(e) => updateAssumption("conversionValue", Number(e.target.value))}
+                    />
+                    <div className="text-xs text-gray-600">
+                      Breakeven @ worst-case ROI: {breakevenSalesValue ? formatCurrency(Math.round(breakevenSalesValue)) : "n/a"}
+                    </div>
+                  </label>
+
+                  <label className="border rounded-lg p-3 bg-gray-50 space-y-2">
+                    <div className="flex items-center justify-between text-sm font-medium" title="Number of active days the campaigns run this month.">
+                      <span>Days/month</span>
+                    </div>
+                    <select
+                      className="border rounded px-2 py-1 text-sm w-full"
+                      value={assumptions.daysPerMonth}
+                      onChange={(e) => {
+                        updateAssumption("daysPerMonth", Number(e.target.value));
+                        setMonthlySpendOverride(null);
+                      }}
+                    >
+                      {[28, 30, 31].map((day) => (
+                        <option key={day} value={day}>
+                          {day} days
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="border rounded-lg p-3 bg-gray-50">
+                    <div className="text-xs uppercase text-gray-600" title="Sum of campaign budgets scaled by the monthly spend slider">
+                      Total monthly ad spend
+                    </div>
+                    <div className="text-2xl font-semibold">{formatCurrency(performanceTotals.totalMonthlySpend)}</div>
+                  </div>
+                  <div className="border rounded-lg p-3 bg-gray-50">
+                    <div className="text-xs uppercase text-gray-600" title="Traffic generated from the monthly spend and global CPC">
+                      Estimated clicks / month
+                    </div>
+                    <div className="text-2xl font-semibold">{formatNumber(Math.round(performanceTotals.totalEstimatedClicks))}</div>
+                  </div>
+                  <div className="border rounded-lg p-3 bg-gray-50">
+                    <div className="text-xs uppercase text-gray-600" title="Leads using worst to best conversion rate assumptions">
+                      Estimated leads / month
+                    </div>
+                    <div className="text-2xl font-semibold">
+                      {formatNumber(Math.round(performanceTotals.totalLeadsWorst))} –{" "}
+                      {formatNumber(Math.round(performanceTotals.totalLeadsBest))}
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-3 border rounded-lg p-4 bg-gradient-to-r from-slate-900 via-indigo-900 to-slate-800 text-white shadow">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <div className="text-sm uppercase text-indigo-100" title="Revenue from lead volume × Sales Value">
+                          Estimated revenue / month
+                        </div>
+                        <div className="text-4xl font-extrabold tracking-tight">
+                          {formatCurrencyCompact(performanceTotals.totalRevenueWorst)} – {formatCurrencyCompact(performanceTotals.totalRevenueBest)}
+                        </div>
+                        <div className="text-xs text-indigo-100/80 mt-1">
+                          Sales value RM {assumptions.conversionValue.toFixed(0)} · Break-even @ worst: {breakevenSalesValue ? formatCurrency(Math.round(breakevenSalesValue)) : "n/a"}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs uppercase text-indigo-100">Earnings outlook</div>
+                        <div className="text-5xl font-black">ROI</div>
+                        <div className="text-sm text-indigo-100/80">Spend → Revenue</div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 w-full">
+                      {[{
+                        label: "Worst",
+                        value: performanceTotals.roiWorst,
+                        revenue: performanceTotals.totalRevenueWorst,
+                        align: "text-left",
+                      }, {
+                        label: "Mid",
+                        value: performanceTotals.roiMid,
+                        revenue: performanceTotals.totalRevenueMid,
+                        align: "text-center",
+                      }, {
+                        label: "Best",
+                        value: performanceTotals.roiBest,
+                        revenue: performanceTotals.totalRevenueBest,
+                        align: "text-right",
+                      }].map((item) => {
+                        const positive = item.value >= 0;
+                        const mid = item.label === "Mid";
+                        const bg = positive ? "bg-green-100 text-green-900" : mid ? "bg-amber-100 text-amber-900" : "bg-red-100 text-red-900";
+                        return (
+                          <div
+                            key={item.label}
+                            className={`rounded-lg p-3 ${bg} bg-opacity-80 flex flex-col gap-2 ${item.align}`}
+                          >
+                            <div className="text-xs uppercase tracking-wide">{item.label} case</div>
+                            <div className="text-3xl font-extrabold">{formatCurrencyCompact(item.revenue)}</div>
+                            <div className="text-sm font-semibold text-black/70">
+                              ROI {formatPercent(item.value)}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-lg font-semibold">Campaign breakdown</h3>
+                    <div className="text-sm text-gray-600">
+                      Sort by any column to see which campaigns drive the most traffic or revenue.
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm border-collapse">
+                      <thead>
+                        <tr>
+                          {(
+                            [
+                              { column: "CampaignName", label: "Campaign" },
+                              { column: "monthlySpend", label: "Monthly spend (MYR)" },
+                              { column: "estimatedClicks", label: "Estimated clicks" },
+                              { column: "leadsWorst", label: "Leads (worst)" },
+                              { column: "leadsBest", label: "Leads (best)" },
+                              { column: "revenueWorst", label: "Revenue (worst)" },
+                              { column: "revenueBest", label: "Revenue (best)" },
+                              { column: "roiWorst", label: "ROI (worst)" },
+                              { column: "roiBest", label: "ROI (best)" },
+                            ] satisfies Array<{ column: keyof PerformanceCampaignRow; label: string }>
+                          ).map(({ column, label }) => (
+                            <th key={column} className="border-b px-2 py-2 text-left whitespace-nowrap">
+                              <TableSortHeader
+                                label={label}
+                                column={column}
+                                sort={performanceSort as SortState<string>}
+                                onChange={(col) =>
+                                  setPerformanceSort(
+                                    toggleSort(performanceSort, col) as SortState<keyof PerformanceCampaignRow>,
+                                  )
+                                }
+                              />
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sortedPerformanceRows.map((row) => (
+                          <tr key={row.CampaignName} className="odd:bg-gray-50">
+                            <td className="px-2 py-2">{row.CampaignName}</td>
+                            <td className="px-2 py-2">{formatCurrency(row.monthlySpend)}</td>
+                            <td className="px-2 py-2">{formatDecimal(Math.round(row.estimatedClicks), 0)}</td>
+                            <td className="px-2 py-2">{formatDecimal(Math.round(row.leadsWorst), 0)}</td>
+                            <td className="px-2 py-2">{formatDecimal(Math.round(row.leadsBest), 0)}</td>
+                            <td className="px-2 py-2">{formatCurrencyCompact(row.revenueWorst)}</td>
+                            <td className="px-2 py-2">{formatCurrencyCompact(row.revenueBest)}</td>
+                            <td className="px-2 py-2">{formatPercent(row.roiWorst)}</td>
+                            <td className="px-2 py-2">{formatPercent(row.roiBest)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
+            <style jsx global>{`
+              .dual-range {
+                pointer-events: none;
+              }
+              .dual-range::-webkit-slider-thumb {
+                pointer-events: auto;
+              }
+              .dual-range::-moz-range-thumb {
+                pointer-events: auto;
+              }
+            `}</style>
+          </section>
+        )}
 
         {viewMode === "hierarchy" && (
           <section className="bg-white border rounded-lg p-4 space-y-4">
@@ -926,7 +1661,10 @@ export default function CampaignVisualizerPage() {
               note="Edit campaign attributes inline."
               onExport={() =>
                 downloadCsv(
-                  filteredCampaigns.map(({ idx, ...rest }) => rest as Record<string, string | number | boolean | null>),
+                  filteredCampaigns.map(({ idx, ...rest }) => {
+                    void idx;
+                    return rest as Record<string, string | number | boolean | null>;
+                  }),
                   "campaigns.csv",
                 )
               }
@@ -1026,7 +1764,11 @@ export default function CampaignVisualizerPage() {
               note="Check CPCs, ads, and keyword coverage."
               onExport={() =>
                 downloadCsv(
-                  filteredAdGroups.map(({ campaignIdx, idx, ...rest }) => rest as Record<string, string | number | boolean | null>),
+                  filteredAdGroups.map(({ campaignIdx, idx, ...rest }) => {
+                    void campaignIdx;
+                    void idx;
+                    return rest as Record<string, string | number | boolean | null>;
+                  }),
                   "ad-groups.csv",
                 )
               }
@@ -1086,7 +1828,13 @@ export default function CampaignVisualizerPage() {
               note="Toggle Normal/Negative, filter by campaign or match type, and export."
               onExport={() =>
                 downloadCsv(
-                  filteredKeywords.map(({ campaignIdx, adGroupIdx, index, adGroupCpc, ...rest }) => rest as Record<string, string | number | boolean | null>),
+                  filteredKeywords.map(({ campaignIdx, adGroupIdx, index, adGroupCpc, ...rest }) => {
+                    void campaignIdx;
+                    void adGroupIdx;
+                    void index;
+                    void adGroupCpc;
+                    return rest as Record<string, string | number | boolean | null>;
+                  }),
                   "keywords.csv",
                 )
               }
@@ -1202,8 +1950,7 @@ function AdGroupTabs({
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [keywordText, setKeywordText] = useState<string>("");
   const [negativeText, setNegativeText] = useState<string>("");
-  if (!adGroup) return null;
-  const ads = Array.isArray(adGroup.ResponsiveSearchAds) ? adGroup.ResponsiveSearchAds : [];
+  const ads = Array.isArray(adGroup?.ResponsiveSearchAds) ? adGroup.ResponsiveSearchAds ?? [] : [];
   const keywords = keywordList(targeting, false);
   const negatives = keywordList(targeting, true);
   const keywordAverages = computeKeywordAverages(keywords);
@@ -1214,6 +1961,7 @@ function AdGroupTabs({
     window.setTimeout(() => setCopiedKey((current) => (current === key ? null : current)), 1200);
   };
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     const formatKw = (kw: CampaignPlanKeyword) => {
       const match = kw.MatchType?.toLowerCase() ?? "";
@@ -1224,6 +1972,11 @@ function AdGroupTabs({
     setKeywordText(keywords.map(formatKw).join(", "));
     setNegativeText(negatives.map(formatKw).join(", "));
   }, [keywords, negatives]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  if (!adGroup) {
+    return <div className="text-sm text-gray-600">Select an ad group to view ads and keywords.</div>;
+  }
 
   const copyAd = async (
     ad: NonNullable<CampaignPlanAdGroup["ResponsiveSearchAds"]>[number],
