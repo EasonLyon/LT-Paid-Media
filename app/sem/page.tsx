@@ -5,6 +5,21 @@ import { CampaignPlan, CampaignStructureRow, Tier } from "@/types/sem";
 
 type StepResponse = Record<string, unknown>;
 
+const tierDetails: Record<Tier, { label: string; description: string }> = {
+  A: {
+    label: "Excellent",
+    description: "Top-performing keywords to prioritize and allocate the most budget toward.",
+  },
+  B: {
+    label: "Average",
+    description: "Solid keywords to test and expand with moderate budget.",
+  },
+  C: {
+    label: "Poor",
+    description: "Early-stage or long-tail ideas to monitor with limited spend.",
+  },
+};
+
 interface StartFormState {
   website: string;
   goal: string;
@@ -20,6 +35,12 @@ type CollapsibleKey = "project" | "step1" | "runSteps" | "step7" | "step8";
 interface StepStatus {
   status: "idle" | "running" | "success" | "error";
   message?: string;
+}
+
+interface ExistingProjectSummary {
+  id: string;
+  createdMs: number;
+  fileCount: number;
 }
 
 type TierSelection = Record<Tier, boolean>;
@@ -94,6 +115,16 @@ async function callApi<T extends StepResponse = StepResponse>(endpoint: string, 
   return json as T;
 }
 
+function buildLocalProjectIdFallback(): string {
+  const pad = (value: number) => value.toString().padStart(2, "0");
+  const now = new Date();
+  const prefix = `${now.getFullYear().toString()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(
+    now.getHours(),
+  )}`;
+  const suffix = `${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  return `${prefix}-${suffix}`;
+}
+
 export default function SemPage() {
   const MIN_AD_SPEND_MYR = 1000;
   const MAX_SLIDER_AD_SPEND_MYR = 50000;
@@ -103,6 +134,9 @@ export default function SemPage() {
   const OTHER_VALUE = "__other";
   const [projectId, setProjectId] = useState<string>("");
   const [isBusy, setIsBusy] = useState(false);
+  const [existingProjects, setExistingProjects] = useState<ExistingProjectSummary[]>([]);
+  const [isFetchingProjects, setIsFetchingProjects] = useState(false);
+  const [projectListError, setProjectListError] = useState<string | null>(null);
   const [availableFiles, setAvailableFiles] = useState<string[]>([]);
   const [isFetchingFiles, setIsFetchingFiles] = useState(false);
   const [fileListError, setFileListError] = useState<string | null>(null);
@@ -168,6 +202,7 @@ export default function SemPage() {
     cancelLabel?: string;
   } | null>(null);
   const confirmResolver = useRef<((value: boolean) => void) | null>(null);
+  const hasUserSetProjectIdRef = useRef(false);
 
   const askConfirm = (title: string, message: string, confirmLabel = "Rerun", cancelLabel = "Use existing") =>
     new Promise<boolean>((resolve) => {
@@ -205,6 +240,7 @@ export default function SemPage() {
       setProjectId(res.projectId);
       persistProjectId(res.projectId);
       refreshProjectFiles(res.projectId);
+      void refreshExistingProjects();
       push(`Step 1 done. projectId=${res.projectId}`);
       updateStepStatus("start", { status: "success", message: "Step 1 complete" });
     } catch (err: unknown) {
@@ -217,32 +253,74 @@ export default function SemPage() {
     }
   };
 
+  const refreshExistingProjects = useCallback(async () => {
+    setIsFetchingProjects(true);
+    setProjectListError(null);
+    try {
+      const res = await fetch("/api/sem/projects", { cache: "no-store" });
+      const json = (await res.json()) as { projects?: ExistingProjectSummary[]; error?: string };
+      if (!res.ok || json.error) {
+        const message = json.error ?? res.statusText;
+        throw new Error(message);
+      }
+      const projects = Array.isArray(json.projects) ? json.projects : [];
+      const sorted = projects.sort((a, b) => (b.createdMs ?? 0) - (a.createdMs ?? 0));
+      setExistingProjects(sorted);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unable to load projects";
+      setExistingProjects([]);
+      setProjectListError(message);
+    } finally {
+      setIsFetchingProjects(false);
+    }
+  }, []);
+
   useEffect(() => {
     const fetchSuggested = async () => {
       try {
         const stored = typeof window !== "undefined" ? window.localStorage.getItem("sem_projectId") : null;
-        if (stored) {
+        if (stored && !hasUserSetProjectIdRef.current) {
           setProjectId(stored);
           push(`Restored projectId: ${stored}`);
           refreshProjectFiles(stored);
           return;
         }
-        const res = await fetch("/api/sem/next-project-id");
-        if (!res.ok) return;
+        const res = await fetch("/api/sem/next-project-id", { cache: "no-store" });
+        if (!res.ok) {
+          throw new Error(res.statusText);
+        }
         const json = (await res.json()) as { suggested?: string };
-        if (json.suggested) {
+        if (json.suggested && !hasUserSetProjectIdRef.current) {
           setProjectId(json.suggested);
           persistProjectId(json.suggested);
           refreshProjectFiles(json.suggested);
           push(`Suggested projectId: ${json.suggested}`);
+          return;
+        }
+        if (!hasUserSetProjectIdRef.current) {
+          const fallback = buildLocalProjectIdFallback();
+          setProjectId(fallback);
+          persistProjectId(fallback);
+          refreshProjectFiles(fallback);
+          push(`Suggested projectId: ${fallback} (fallback)`);
         }
       } catch {
-        // ignore suggestion fetch errors
+        if (!hasUserSetProjectIdRef.current) {
+          const fallback = buildLocalProjectIdFallback();
+          setProjectId(fallback);
+          persistProjectId(fallback);
+          refreshProjectFiles(fallback);
+          push(`Suggested projectId: ${fallback} (fallback)`);
+        }
       }
     };
     fetchSuggested();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    void refreshExistingProjects();
+  }, [refreshExistingProjects]);
 
   useEffect(() => {
     return () => {
@@ -290,6 +368,7 @@ export default function SemPage() {
   }, []);
 
   const handleProjectIdChange = (value: string) => {
+    hasUserSetProjectIdRef.current = true;
     setProjectId(value);
     persistProjectId(value);
   };
@@ -537,6 +616,12 @@ export default function SemPage() {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  const formatProjectTimestamp = (ms: number) => {
+    if (!Number.isFinite(ms) || ms <= 0) return "Unknown";
+    const date = new Date(ms);
+    return date.toLocaleString();
   };
 
   // generic progress indicator (used for steps without server polling)
@@ -1052,8 +1137,8 @@ export default function SemPage() {
           </div>
         </header>
 
-        <div className="flex flex-col gap-6 md:flex-row md:items-start">
-          <div className="flex-1 space-y-6">
+        <div className="flex flex-col gap-6 md:flex-row md:items-start md:gap-8">
+          <div className="flex-1 min-w-0 space-y-6 md:basis-1/2">
             <CollapsibleSection
               title="Project ID & Files"
               isOpen={openSections.project}
@@ -1069,6 +1154,42 @@ export default function SemPage() {
                   autoComplete="off"
                 />
               </label>
+              <div className="grid gap-2">
+                <div className="flex items-center justify-between text-sm text-gray-700">
+                  <span>Or select an existing project</span>
+                  <button
+                    type="button"
+                    className="border rounded px-2 py-1 bg-white hover:bg-blue-50 text-xs disabled:opacity-50"
+                    onClick={() => void refreshExistingProjects()}
+                    disabled={isFetchingProjects}
+                  >
+                    {isFetchingProjects ? "Loading..." : "Refresh list"}
+                  </button>
+                </div>
+                <select
+                  className="border rounded px-3 py-2 text-sm"
+                  value={existingProjects.find((p) => p.id === projectId) ? projectId : ""}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (value) handleProjectIdChange(value);
+                  }}
+                >
+                  <option value="">Choose existing project</option>
+                  {existingProjects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.id} — {project.fileCount} {project.fileCount === 1 ? "file" : "files"} •{" "}
+                      {formatProjectTimestamp(project.createdMs)}
+                    </option>
+                  ))}
+                </select>
+                {projectListError && <div className="text-xs text-red-700">{projectListError}</div>}
+                {!projectListError && !isFetchingProjects && existingProjects.length === 0 && (
+                  <div className="text-xs text-gray-600">No existing projects found in output/ yet.</div>
+                )}
+                {!projectListError && existingProjects.length > 0 && (
+                  <div className="text-xs text-gray-600">Sorted by latest created time first.</div>
+                )}
+              </div>
               <div className="text-sm text-gray-600">
                 Used for starting/running steps and browsing generated JSON for this project.
               </div>
@@ -1117,7 +1238,7 @@ export default function SemPage() {
                   )}
                   {availableFiles.length > 0 &&
                     availableFiles.filter((file) => file.toLowerCase().includes(fileFilter.toLowerCase())).length === 0 && (
-                      <div className="text-sm text-gray-500">No matches for "{fileFilter}".</div>
+                      <div className="text-sm text-gray-500">No matches for &quot;{fileFilter}&quot;.</div>
                     )}
                 </div>
               </div>
@@ -1362,7 +1483,7 @@ export default function SemPage() {
                         onChange={() => handleTierToggle(tier)}
                         className="h-4 w-4"
                       />
-                      <span>Tier {tier}</span>
+                      <span>Tier {tier} ({tierDetails[tier].label})</span>
                     </label>
                   ))}
                 </div>
@@ -1486,7 +1607,7 @@ export default function SemPage() {
             </CollapsibleSection>
           </div>
 
-          <div className="flex-1 flex flex-col gap-4 md:h-[80vh]">
+          <div className="flex-1 min-w-0 flex flex-col gap-4 md:h-[80vh] md:basis-1/2">
             <section className="space-y-3 border rounded-lg p-4 flex-1 md:flex-[2] bg-white">
               <h2 className="text-xl font-medium">Logs</h2>
               {isStep1Running && (
@@ -1522,7 +1643,7 @@ export default function SemPage() {
               <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 h-64 md:max-h-[60vh] overflow-y-auto text-sm space-y-1">
                 {logs.length === 0 && <div>No logs yet.</div>}
                 {logs.map((log, idx) => (
-                  <div key={idx} className="whitespace-pre-wrap">
+                  <div key={idx} className="whitespace-pre-wrap break-words">
                     {log}
                   </div>
                 ))}

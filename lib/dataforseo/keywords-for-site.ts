@@ -1,4 +1,3 @@
-import { tqdm } from "node-console-progress-bar-tqdm";
 import { getDataForSeoClient } from "./client";
 
 interface KeywordsForSiteOptions {

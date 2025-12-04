@@ -14,6 +14,7 @@ export type OutputProjectSummary = {
   id: string;
   files: OutputFileSummary[];
   totalSize: number;
+  createdMs: number;
 };
 
 export async function ensureOutputRoot(): Promise<string> {
@@ -88,6 +89,13 @@ export async function listOutputProjects(): Promise<OutputProjectSummary[]> {
       .filter((entry) => entry.isDirectory() && SAFE_ENTRY_NAME.test(entry.name))
       .map(async (entry) => {
         const folder = path.join(root, entry.name);
+        const stats = await fs.stat(folder);
+        const createdMs =
+          (Number.isFinite(stats.birthtimeMs) && stats.birthtimeMs > 0
+            ? stats.birthtimeMs
+            : Number.isFinite(stats.ctimeMs)
+            ? stats.ctimeMs
+            : null) ?? stats.mtimeMs;
         const files = await fs.readdir(folder, { withFileTypes: true });
         const summaries = await Promise.all(
           files
@@ -99,11 +107,19 @@ export async function listOutputProjects(): Promise<OutputProjectSummary[]> {
             }),
         );
         const totalSize = summaries.reduce((sum, file) => sum + file.size, 0);
-        return { id: entry.name, files: summaries.sort((a, b) => a.name.localeCompare(b.name)), totalSize };
+        return {
+          id: entry.name,
+          files: summaries.sort((a, b) => a.name.localeCompare(b.name)),
+          totalSize,
+          createdMs,
+        };
       }),
   );
 
-  return projects.sort((a, b) => b.id.localeCompare(a.id));
+  return projects.sort((a, b) => {
+    if (a.createdMs !== b.createdMs) return b.createdMs - a.createdMs;
+    return b.id.localeCompare(a.id);
+  });
 }
 
 export async function deleteOutputFile(projectId: string, filename: string): Promise<boolean> {
@@ -146,7 +162,15 @@ export async function readOutputFile(projectId: string, filename: string): Promi
   assertSafeName(projectId, "project id");
   assertSafeName(filename, "file name");
   const fullPath = projectFilePath(projectId, filename);
-  const content = await fs.readFile(fullPath, "utf8");
+  let content: string;
+  try {
+    content = await fs.readFile(fullPath, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("File not found");
+    }
+    throw err;
+  }
   try {
     const parsed = JSON.parse(content);
     return { content, isJson: true, parsed };
