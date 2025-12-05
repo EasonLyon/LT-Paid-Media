@@ -10,6 +10,7 @@ export async function GET() {
       id: project.id,
       createdMs: project.createdMs,
       fileCount: project.files.length,
+      websiteDomain: project.websiteDomain ?? null,
     }));
     return NextResponse.json({ projects: simplified }, { headers });
   } catch (err) {

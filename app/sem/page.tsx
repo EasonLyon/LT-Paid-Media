@@ -50,6 +50,7 @@ interface ExistingProjectSummary {
   id: string;
   createdMs: number;
   fileCount: number;
+  websiteDomain?: string | null;
 }
 
 type TierSelection = Record<Tier, boolean>;
@@ -1376,7 +1377,7 @@ export default function SemPage() {
                   </button>
                 </div>
                 <select
-                  className="border rounded px-3 py-2 text-sm"
+                  className="border rounded px-3 py-2 text-sm w-full max-w-full truncate"
                   value={existingProjects.find((p) => p.id === projectId) ? projectId : ""}
                   onChange={(e) => {
                     const value = e.target.value;
@@ -1388,6 +1389,7 @@ export default function SemPage() {
                     <option key={project.id} value={project.id}>
                       {project.id} — {project.fileCount} {project.fileCount === 1 ? "file" : "files"} •{" "}
                       {formatProjectTimestamp(project.createdMs)}
+                      {project.websiteDomain ? ` • ${project.websiteDomain}` : ""}
                     </option>
                   ))}
                 </select>

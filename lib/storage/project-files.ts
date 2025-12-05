@@ -15,6 +15,7 @@ export type OutputProjectSummary = {
   files: OutputFileSummary[];
   totalSize: number;
   createdMs: number;
+  websiteDomain?: string | null;
 };
 
 export async function ensureOutputRoot(): Promise<string> {
@@ -97,6 +98,10 @@ export async function listOutputProjects(): Promise<OutputProjectSummary[]> {
             ? stats.ctimeMs
             : null) ?? stats.mtimeMs;
         const files = await fs.readdir(folder, { withFileTypes: true });
+        const hasUserInput = files.some((file) => file.isFile() && file.name === "00-user-input.json");
+        const websiteDomain = hasUserInput
+          ? await extractWebsiteDomain(path.join(folder, "00-user-input.json"))
+          : null;
         const summaries = await Promise.all(
           files
             .filter((file) => file.isFile())
@@ -112,6 +117,7 @@ export async function listOutputProjects(): Promise<OutputProjectSummary[]> {
           files: summaries.sort((a, b) => a.name.localeCompare(b.name)),
           totalSize,
           createdMs,
+          websiteDomain,
         };
       }),
   );
@@ -120,6 +126,43 @@ export async function listOutputProjects(): Promise<OutputProjectSummary[]> {
     if (a.createdMs !== b.createdMs) return b.createdMs - a.createdMs;
     return b.id.localeCompare(a.id);
   });
+}
+
+function normalizeDomain(value: string): string | null {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return null;
+  const withoutWww = trimmed.startsWith("www.") ? trimmed.slice(4) : trimmed;
+  return withoutWww || null;
+}
+
+function normalizeDomainFromUrl(input: string): string | null {
+  const candidate = input.trim();
+  if (!candidate) return null;
+  try {
+    const url = new URL(candidate.includes("://") ? candidate : `https://${candidate}`);
+    return normalizeDomain(url.hostname) || null;
+  } catch {
+    const withoutProtocol = candidate.replace(/^https?:\/\//i, "");
+    const host = withoutProtocol.split("/")[0];
+    return normalizeDomain(host);
+  }
+}
+
+async function extractWebsiteDomain(filePath: string): Promise<string | null> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw) as {
+      rawInput?: { website?: unknown };
+      normalizedInput?: { website?: unknown };
+    };
+    const website =
+      (typeof parsed?.normalizedInput?.website === "string" && parsed.normalizedInput.website) ||
+      (typeof parsed?.rawInput?.website === "string" && parsed.rawInput.website);
+    if (!website) return null;
+    return normalizeDomainFromUrl(website);
+  } catch {
+    return null;
+  }
 }
 
 export async function deleteOutputFile(projectId: string, filename: string): Promise<boolean> {
