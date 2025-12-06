@@ -1,4 +1,5 @@
 import { getDataForSeoClient } from "./client";
+import { ensureDataForSeoResponseOk } from "./validate";
 
 interface KeywordsForSiteOptions {
   onProgress?: (done: number, total: number, target: string) => Promise<void> | void;
@@ -25,6 +26,7 @@ export async function fetchKeywordsForSites(
       "/v3/keywords_data/google_ads/keywords_for_site/live",
       tasks
     );
+    ensureDataForSeoResponseOk(data, "keywords_for_site");
     responses.push(data);
 
     done += 1;

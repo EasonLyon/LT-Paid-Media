@@ -9,8 +9,15 @@ import {
   projectFilePath,
   readProjectProgress,
 } from "@/lib/storage/project-files";
-import { EnrichedKeywordRecord, InitialKeywordJson, SerpExpansionResult, TopOrganicUrl } from "@/types/sem";
+import {
+  EnrichedKeywordRecord,
+  InitialKeywordJson,
+  NormalizedProjectInitInput,
+  SerpExpansionResult,
+  TopOrganicUrl,
+} from "@/types/sem";
 import { flattenKeywordsWithCategories } from "@/lib/sem/keywords";
+import { ensureDataForSeoResponseOk } from "@/lib/dataforseo/validate";
 
 interface SeedSelection {
   category: string;
@@ -52,6 +59,20 @@ export async function POST(req: Request) {
     const completedExisting = Math.min(existingProgress?.completed ?? 0, seedKeywords.length);
     const startTimestamp = existingProgress?.startTimestamp ?? Date.now();
     const history: Step3HistoryEntry[] = existingProgress?.history ?? [];
+
+    const normalizedInput = await readProjectJson<{ normalizedInput?: NormalizedProjectInitInput }>(
+      projectId,
+      "00-user-input.json",
+    ).catch(() => null);
+    const languageDetails = inferLanguageCode(
+      normalizedInput?.normalizedInput?.language,
+      filtered.find((rec) => Boolean(rec.language_code))?.language_code,
+    );
+    const language_code = languageDetails.code;
+    const location_code = filtered.find((rec) => Boolean(rec.location_code))?.location_code ?? 2458;
+    if (languageDetails.note) {
+      console.log(`[Step3] ${languageDetails.note}`);
+    }
 
     const startIndex = force ? 0 : completedExisting;
     if (!force && startIndex >= seedKeywords.length) {
@@ -111,7 +132,8 @@ export async function POST(req: Request) {
         const tasks = [
           {
             keyword,
-            location_code: 2458,
+            location_code,
+            language_code,
             device: "mobile",
             os: "android",
             depth: 10,
@@ -120,6 +142,7 @@ export async function POST(req: Request) {
         ];
         try {
           const { data } = await client.post("/v3/serp/google/organic/live/advanced", tasks);
+          ensureDataForSeoResponseOk(data, "serp", { requireResult: true });
           const newKs = extractSerpNewKeywords([data], originalKeywordSet);
           newKs.forEach((k) => newKeywordSet.add(k));
           const topUrls = extractTopUrls([data]);
@@ -169,6 +192,9 @@ export async function POST(req: Request) {
       filePath,
       resumedFrom: startIndex,
       seedFilePath,
+      language_code,
+      language_note: languageDetails.note,
+      language_input: languageDetails.inputLanguages ?? undefined,
     });
   } catch (error: unknown) {
     console.error("[Step3] failed", error);
@@ -194,6 +220,77 @@ function createRateLimiter(maxPerWindow: number, windowMs: number) {
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function inferLanguageCode(languageFromInput?: string, fallbackCodeFromData?: string): {
+  code: string;
+  note?: string;
+  inputLanguages?: string[];
+} {
+  const parsedInputLanguages = splitLanguages(languageFromInput);
+  const primaryLanguage = parsedInputLanguages[0] ?? null;
+  const mappedFromInput = primaryLanguage ? mapLanguageToCode(primaryLanguage) : null;
+
+  if (mappedFromInput) {
+    return {
+      code: mappedFromInput,
+      note:
+        parsedInputLanguages.length > 1
+          ? `Multiple languages provided (${parsedInputLanguages.join(", ")}). Using ${primaryLanguage} -> ${mappedFromInput} for SERP.`
+          : undefined,
+      inputLanguages: parsedInputLanguages.length ? parsedInputLanguages : undefined,
+    };
+  }
+
+  if (parsedInputLanguages.length > 0) {
+    return {
+      code: "en",
+      note: `Could not map language(s) "${parsedInputLanguages.join(", ")}". Defaulting to English (en) for SERP.`,
+      inputLanguages: parsedInputLanguages,
+    };
+  }
+
+  if (fallbackCodeFromData && typeof fallbackCodeFromData === "string" && fallbackCodeFromData.trim()) {
+    return { code: fallbackCodeFromData.trim(), inputLanguages: undefined };
+  }
+
+  return { code: "en", note: "Language not provided. Defaulting to English (en) for SERP." };
+}
+
+function splitLanguages(languageFromInput?: string): string[] {
+  if (!languageFromInput) return [];
+  const raw = languageFromInput
+    .split(/[,/|]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (raw.length === 0 && languageFromInput.trim()) return [languageFromInput.trim()];
+  return raw;
+}
+
+function mapLanguageToCode(language: string): string | null {
+  const normalized = language.trim().toLowerCase();
+  const map: Record<string, string> = {
+    en: "en",
+    english: "en",
+    "en-us": "en",
+    "en-gb": "en",
+    malay: "ms",
+    "bahasa melayu": "ms",
+    "bahasa malaysia": "ms",
+    malaysian: "ms",
+    ms: "ms",
+    chinese: "zh",
+    mandarin: "zh",
+    "zh-cn": "zh",
+    "zh-hans": "zh",
+    "zh-hant": "zh",
+    zh: "zh",
+    taiwanese: "zh",
+    cantonese: "zh",
+    tamil: "ta",
+    ta: "ta",
+  };
+  return map[normalized] ?? null;
 }
 
 function selectSeedsByCategoryLevel2(records: EnrichedKeywordRecord[]): {

@@ -2,6 +2,7 @@ import { tqdm } from "node-console-progress-bar-tqdm";
 import { getDataForSeoClient } from "./client";
 import { chunkArray, isValidKeyword } from "../sem/keywords";
 import { DataForSeoSearchVolumeResponse } from "@/types/sem";
+import { ensureDataForSeoResponseOk } from "./validate";
 
 interface SearchVolumeOptions {
   location_code?: number;
@@ -50,6 +51,7 @@ export async function fetchSearchVolumeBatches(
       "/v3/keywords_data/google_ads/search_volume/live",
       tasks,
     );
+    ensureDataForSeoResponseOk(data, "search_volume");
     responses.push(data);
     completedBatches += 1;
     processedKeywords = Math.min(processedKeywords + batch.length, totalKeywords);
