@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { normalizeProjectInitInput, buildProjectId, ensureProjectFolder, persistProjectInitInput } from "@/lib/sem/input";
 import { fetchInitialKeywordClusters } from "@/lib/openai/initial-keywords";
-import { writeProjectJson } from "@/lib/storage/project-files";
+import { ensureOutputRoot, writeProjectJson } from "@/lib/storage/project-files";
 import { ProjectInitInput } from "@/types/sem";
 
 export async function POST(req: Request) {
   try {
     console.log("[api/start] init");
+    await ensureOutputRoot();
     const body = (await req.json()) as ProjectInitInput;
     const normalized = normalizeProjectInitInput(body);
     const projectId = await buildProjectId();
