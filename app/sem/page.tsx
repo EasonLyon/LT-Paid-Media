@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { CampaignPlan, CampaignStructureRow, Tier } from "@/types/sem";
+import { CampaignPlan, CampaignStructureRow, NormalizedProjectInitInput, ProjectInitInput, Tier } from "@/types/sem";
 
 type StepResponse = Record<string, unknown>;
 
@@ -67,12 +67,70 @@ interface AppliedCampaignFilters {
   seoFlag: boolean;
 }
 
+const MIN_AD_SPEND_MYR = 1000;
+const MAX_SLIDER_AD_SPEND_MYR = 50000;
+const GOAL_OPTIONS = ["Lead", "Traffic", "Sales", "Awareness"];
+const LOCATION_OPTIONS = ["Malaysia", "Singapore", "Indonesia", "Philippines", "Thailand"];
+const LANGUAGE_OPTIONS = ["English", "Malay", "Chinese", "Tamil"];
+const OTHER_VALUE = "__other";
+
+const DEFAULT_START_FORM: StartFormState = {
+  website: "",
+  goal: "Lead",
+  location: "Malaysia",
+  state_list: "",
+  language: "English",
+  monthly_adspend_myr: 5000,
+};
+
+function toStateListString(value: unknown): string {
+  if (!value) return "";
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+      .filter(Boolean)
+      .join(", ");
+  }
+  return typeof value === "string" ? value : "";
+}
+
+function coerceAdSpend(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(/,/g, ""));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function buildStartFormFromInput(
+  source: Partial<ProjectInitInput> | Partial<NormalizedProjectInitInput> | null | undefined,
+): StartFormState {
+  const fallback = DEFAULT_START_FORM;
+  if (!source || typeof source !== "object") return fallback;
+  const stateListValue =
+    "state_list" in source
+      ? (source as ProjectInitInput | NormalizedProjectInitInput).state_list
+      : (source as { state_list?: unknown }).state_list;
+  const adSpend =
+    (source as ProjectInitInput).monthly_adspend_myr ?? (source as NormalizedProjectInitInput).monthly_adspend_myr;
+
+  return {
+    website: typeof source.website === "string" ? source.website : fallback.website,
+    goal: typeof source.goal === "string" && source.goal ? source.goal : fallback.goal,
+    location: typeof source.location === "string" && source.location ? source.location : fallback.location,
+    state_list: toStateListString(stateListValue),
+    language: typeof source.language === "string" && source.language ? source.language : fallback.language,
+    monthly_adspend_myr: coerceAdSpend(adSpend, fallback.monthly_adspend_myr),
+  };
+}
+
 function useLogs() {
   const [logs, setLogs] = useState<string[]>([]);
-  const push = (message: string) => {
+  const push = useCallback((message: string) => {
     const timestamp = new Date().toLocaleTimeString();
     setLogs((prev) => [`[${timestamp}] ${message}`, ...prev]);
-  };
+  }, []);
   return { logs, push };
 }
 
@@ -177,12 +235,6 @@ function getShortFileLabel(filename: string): string {
 }
 
 export default function SemPage() {
-  const MIN_AD_SPEND_MYR = 1000;
-  const MAX_SLIDER_AD_SPEND_MYR = 50000;
-  const goalOptions = ["Lead", "Traffic", "Sales", "Awareness"];
-  const locationOptions = ["Malaysia", "Singapore", "Indonesia", "Philippines", "Thailand"];
-  const languageOptions = ["English", "Malay", "Chinese", "Tamil"];
-  const OTHER_VALUE = "__other";
   const [projectId, setProjectId] = useState<string>("");
   const [isBusy, setIsBusy] = useState(false);
   const [existingProjects, setExistingProjects] = useState<ExistingProjectSummary[]>([]);
@@ -218,20 +270,13 @@ export default function SemPage() {
     visualizer: { status: "idle" },
   });
 
-  const [startForm, setStartForm] = useState<StartFormState>({
-    website: "",
-    goal: "Lead",
-    location: "Malaysia",
-    state_list: "",
-    language: "English",
-    monthly_adspend_myr: 5000,
-  });
-  const [adSpendInput, setAdSpendInput] = useState<string>("5000");
+  const [startForm, setStartForm] = useState<StartFormState>({ ...DEFAULT_START_FORM });
+  const [adSpendInput, setAdSpendInput] = useState<string>(DEFAULT_START_FORM.monthly_adspend_myr.toString());
   const [useCustomLocation, setUseCustomLocation] = useState<boolean>(
-    !locationOptions.includes("Malaysia"),
+    !LOCATION_OPTIONS.includes(DEFAULT_START_FORM.location),
   );
   const [useCustomLanguage, setUseCustomLanguage] = useState<boolean>(
-    !languageOptions.includes("English"),
+    !LANGUAGE_OPTIONS.includes(DEFAULT_START_FORM.language),
   );
   const [campaignFilters, setCampaignFilters] = useState<CampaignFiltersState>({
     tiers: { A: true, B: false, C: false },
@@ -289,6 +334,7 @@ export default function SemPage() {
     push("Starting Step 1 – OpenAI init");
     try {
       const payload = {
+        projectId,
         website: startForm.website,
         goal: startForm.goal,
         location: startForm.location,
@@ -434,6 +480,56 @@ export default function SemPage() {
       setIsFetchingFiles(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (!projectId) {
+      setStartForm({ ...DEFAULT_START_FORM });
+      setAdSpendInput(String(DEFAULT_START_FORM.monthly_adspend_myr));
+      setUseCustomLocation(!LOCATION_OPTIONS.includes(DEFAULT_START_FORM.location));
+      setUseCustomLanguage(!LANGUAGE_OPTIONS.includes(DEFAULT_START_FORM.language));
+      return;
+    }
+    let aborted = false;
+    // reset fields when projectId changes before loading any cached inputs
+    setStartForm({ ...DEFAULT_START_FORM });
+    setAdSpendInput(String(DEFAULT_START_FORM.monthly_adspend_myr));
+    setUseCustomLocation(!LOCATION_OPTIONS.includes(DEFAULT_START_FORM.location));
+    setUseCustomLanguage(!LANGUAGE_OPTIONS.includes(DEFAULT_START_FORM.language));
+    const loadSavedInputs = async () => {
+      try {
+        const res = await fetch(
+          `/api/sem/project-files?projectId=${encodeURIComponent(projectId)}&file=00-user-input.json`,
+          { cache: "no-store" },
+        );
+        if (res.status === 404) return;
+        const json = (await res.json()) as {
+          data?: { rawInput?: ProjectInitInput; normalizedInput?: NormalizedProjectInitInput };
+          error?: string;
+        };
+        if (!res.ok || json.error) {
+          const message = json.error ?? res.statusText;
+          throw new Error(message);
+        }
+        const source = json.data?.rawInput ?? json.data?.normalizedInput;
+        if (!source) return;
+        const nextForm = buildStartFormFromInput(source);
+        if (aborted) return;
+        setStartForm(nextForm);
+        setAdSpendInput(String(nextForm.monthly_adspend_myr));
+        setUseCustomLocation(!LOCATION_OPTIONS.includes(nextForm.location));
+        setUseCustomLanguage(!LANGUAGE_OPTIONS.includes(nextForm.language));
+        push(`Loaded saved inputs for ${projectId}`);
+      } catch (err: unknown) {
+        if (aborted) return;
+        const message = err instanceof Error ? err.message : "Unable to load saved inputs";
+        console.warn("[sem] unable to load saved inputs", message);
+      }
+    };
+    loadSavedInputs();
+    return () => {
+      aborted = true;
+    };
+  }, [projectId, push]);
 
   const handleProjectIdChange = (value: string) => {
     hasUserSetProjectIdRef.current = true;
@@ -932,7 +1028,11 @@ export default function SemPage() {
       const isEarly = elapsed < 10000;
       const fallback = isEarly ? 1000 : 4000;
       const nextMs = await pollFn(pid, nextDelay || fallback);
-      scheduleStepProgressPoll(step, pid, nextMs || fallback);
+      if (nextMs === null) {
+        cancelStepProgressPoll();
+        return;
+      }
+      scheduleStepProgressPoll(step, pid, nextMs ?? fallback);
     }, nextDelay);
   };
 
@@ -985,13 +1085,24 @@ export default function SemPage() {
     }
   };
 
-  const fetchStep4Progress = async (pid: string, fallback: number): Promise<number> => {
+  const fetchStep4Progress = async (pid: string, fallback: number): Promise<number | null> => {
     try {
       const res = await fetch(`/api/sem/step4-progress?projectId=${encodeURIComponent(pid)}`);
       if (!res.ok) return fallback;
-      const json = (await res.json()) as { percent?: number; nextPollMs?: number };
+      const json = (await res.json()) as {
+        percent?: number;
+        nextPollMs?: number;
+        status?: "pending" | "running" | "done" | "error";
+        errorMessage?: string;
+      };
       if (typeof json.percent === "number") {
         setProgress(Math.min(Math.max(json.percent, 0), 100));
+      }
+      const status: StepStatus["status"] =
+        json.status === "done" ? "success" : json.status === "error" ? "error" : "running";
+      updateStepStatus("site", { status, message: json.errorMessage });
+      if (status === "success" || status === "error") {
+        return null;
       }
       return typeof json.nextPollMs === "number" ? json.nextPollMs : fallback;
     } catch {
@@ -1439,7 +1550,7 @@ export default function SemPage() {
                       value={startForm.goal}
                       onChange={(e) => setStartForm((prev) => ({ ...prev, goal: e.target.value }))}
                     >
-                      {goalOptions.map((option) => (
+                      {GOAL_OPTIONS.map((option) => (
                         <option key={option} value={option}>
                           {option}
                         </option>
@@ -1461,7 +1572,7 @@ export default function SemPage() {
                         }
                       }}
                     >
-                      {locationOptions.map((option) => (
+                      {LOCATION_OPTIONS.map((option) => (
                         <option key={option} value={option}>
                           {option}
                         </option>
@@ -1503,7 +1614,7 @@ export default function SemPage() {
                         }
                       }}
                     >
-                      {languageOptions.map((option) => (
+                      {LANGUAGE_OPTIONS.map((option) => (
                         <option key={option} value={option}>
                           {option}
                         </option>

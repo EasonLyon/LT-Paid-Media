@@ -2,6 +2,8 @@ import fs from "fs/promises";
 import { NormalizedProjectInitInput, ProjectInitInput } from "@/types/sem";
 import { ensureOutputRoot, ensureProjectFolder, writeProjectJson } from "../storage/project-files";
 
+const SAFE_PROJECT_ID = /^[a-zA-Z0-9._-]+$/;
+
 function pad(num: number): string {
   return num.toString().padStart(2, "0");
 }
@@ -76,6 +78,26 @@ export async function buildProjectId(): Promise<string> {
   await ensureProjectFolder(projectId);
   console.log(`[buildProjectId] generated ${projectId}`);
   return projectId;
+}
+
+function normalizeProjectId(candidate?: string | null): string | null {
+  if (typeof candidate !== "string") return null;
+  const trimmed = candidate.trim();
+  if (!trimmed) return null;
+  if (!SAFE_PROJECT_ID.test(trimmed) || trimmed.includes("/") || trimmed.includes("\\") || trimmed.includes("..")) {
+    return null;
+  }
+  return trimmed;
+}
+
+export async function resolveProjectId(requested?: string | null): Promise<string> {
+  const normalized = normalizeProjectId(requested);
+  if (normalized) {
+    await ensureProjectFolder(normalized);
+    console.log(`[resolveProjectId] using provided projectId ${normalized}`);
+    return normalized;
+  }
+  return buildProjectId();
 }
 
 export async function previewNextProjectId(): Promise<string> {

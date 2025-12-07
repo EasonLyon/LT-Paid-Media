@@ -36,7 +36,11 @@ async function enrichSerpKeywordsWithSearchVolume(
   console.log(`[Step5] fetching search volume for ${uniqueKeywords.length} serp keyword(s)`);
   const { responses, skipped } = await fetchSearchVolumeBatches(uniqueKeywords);
   if (skipped.length) {
-    console.warn(`[Step5] skipped ${skipped.length} serp keyword(s) due to validation`);
+    const sample = skipped.slice(0, 5).join(", ");
+    console.warn(
+      `[Step5] skipped ${skipped.length} serp keyword(s) due to validation/DataForSEO rejection` +
+        (sample ? `; e.g. ${sample}` : ""),
+    );
   }
 
   await writeProjectJson(projectId, "05", "serp-keywords-search-volume-raw.json", responses);

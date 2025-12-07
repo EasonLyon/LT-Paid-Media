@@ -12,6 +12,11 @@ import {
 import { SerpExpansionResult, SiteKeywordRecord } from "@/types/sem";
 
 export async function POST(req: Request) {
+  let currentProjectId: string | null = null;
+  let startTimestamp = Date.now();
+  let totalTargets = 0;
+  let completed = 0;
+  let lastTarget: string | null = null;
   try {
     console.log("[Step4] start");
     const { projectId, force } = (await req.json()) as { projectId?: string; force?: boolean };
@@ -38,7 +43,7 @@ export async function POST(req: Request) {
     }>(projectId, "step4-progress.json");
 
     const completedExisting = Math.min(existingProgress?.completed ?? 0, urls.length);
-    const startTimestamp = existingProgress?.startTimestamp ?? Date.now();
+    startTimestamp = existingProgress?.startTimestamp ?? Date.now();
     const history: Array<{ target: string; timestamp: string; completed: number }> = existingProgress?.history ?? [];
 
     const existingResultPath = projectFilePath(projectId, "06-site-keywords-from-top-domains.json");
@@ -61,15 +66,25 @@ export async function POST(req: Request) {
 
     const startIndex = force ? 0 : completedExisting;
     let done = startIndex;
-    const writeProg = async (completed: number, target: string | null, final = false) => {
+    totalTargets = urls.length;
+    completed = done;
+    const writeProg = async (
+      completedCount: number,
+      target: string | null,
+      final = false,
+      status: "running" | "done" | "error" = "running",
+      errorMessage?: string,
+    ) => {
       const elapsed = Date.now() - startTimestamp;
       const nextPollMs = elapsed < 10000 ? 1000 : 4000;
       await writeProjectProgress(projectId, "step4-progress.json", {
         step: 4,
         target,
-        completed,
+        completed: completedCount,
         total: urls.length,
-        percent: urls.length === 0 ? 0 : Math.round((completed / urls.length) * 100),
+        percent: urls.length === 0 ? 0 : Math.round((completedCount / urls.length) * 100),
+        status,
+        errorMessage,
         timestamp: new Date().toISOString(),
         startTimestamp,
         nextPollMs: final ? 0 : nextPollMs,
@@ -92,6 +107,7 @@ export async function POST(req: Request) {
 
     await runWithConcurrency(targetsToProcess, concurrency, async (targetUrl) => {
       await limiter();
+      lastTarget = targetUrl;
       const responses = await fetchKeywordsForSites([targetUrl]);
       const normalized = normalizeSiteKeywordRecords(responses, projectId);
       const filtered = normalized.filter((rec) => rec.search_volume !== null && rec.search_volume >= 100);
@@ -102,13 +118,14 @@ export async function POST(req: Request) {
         }
       }
       done += 1;
+      completed = done;
       history.push({ target: targetUrl, timestamp: new Date().toISOString(), completed: done });
       await writeProg(done, targetUrl);
       progress.update(done);
       await writeProjectJson(projectId, "06", "site-keywords-from-top-domains.json", Array.from(recordMap.values()));
     });
 
-    await writeProg(urls.length, null, true);
+    await writeProg(urls.length, null, true, "done");
     progress.update(urls.length, true);
 
     const finalRecords = Array.from(recordMap.values());
@@ -124,6 +141,22 @@ export async function POST(req: Request) {
   } catch (error: unknown) {
     console.error("[Step4] failed", error);
     const message = error instanceof Error ? error.message : "Unknown error";
+    if (currentProjectId) {
+      const safePercent = totalTargets === 0 ? 0 : Math.round((completed / totalTargets) * 100);
+      await writeProjectProgress(currentProjectId, "step4-progress.json", {
+        step: 4,
+        target: lastTarget,
+        completed,
+        total: totalTargets,
+        percent: safePercent,
+        status: "error",
+        errorMessage: message,
+        timestamp: new Date().toISOString(),
+        startTimestamp,
+        nextPollMs: 0,
+        history: [],
+      });
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
