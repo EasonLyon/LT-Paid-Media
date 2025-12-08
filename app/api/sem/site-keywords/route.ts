@@ -1,13 +1,11 @@
 import { NextResponse } from "next/server";
-import fs from "fs/promises";
 import { fetchKeywordsForSites } from "@/lib/dataforseo/keywords-for-site";
 import { normalizeSiteKeywordRecords } from "@/lib/sem/site-keywords";
 import {
   readProjectJson,
+  readProjectProgress,
   writeProjectJson,
   writeProjectProgress,
-  projectFilePath,
-  readProjectProgress,
 } from "@/lib/storage/project-files";
 import { SerpExpansionResult, SiteKeywordRecord } from "@/types/sem";
 
@@ -46,14 +44,10 @@ export async function POST(req: Request) {
     startTimestamp = existingProgress?.startTimestamp ?? Date.now();
     const history: Array<{ target: string; timestamp: string; completed: number }> = existingProgress?.history ?? [];
 
-    const existingResultPath = projectFilePath(projectId, "06-site-keywords-from-top-domains.json");
-    let existingRecords: SiteKeywordRecord[] = [];
-    try {
-      const raw = await fs.readFile(existingResultPath, "utf8");
-      existingRecords = JSON.parse(raw) as SiteKeywordRecord[];
-    } catch {
-      // ignore
-    }
+    const existingRecords =
+      (await readProjectJson<SiteKeywordRecord[]>(projectId, "06-site-keywords-from-top-domains.json").catch(
+        () => [],
+      )) ?? [];
 
     if (!force && completedExisting >= urls.length && existingRecords.length) {
       return NextResponse.json({

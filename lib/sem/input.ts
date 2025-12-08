@@ -1,6 +1,5 @@
-import fs from "fs/promises";
 import { NormalizedProjectInitInput, ProjectInitInput } from "@/types/sem";
-import { ensureOutputRoot, ensureProjectFolder, writeProjectJson } from "../storage/project-files";
+import { ensureProjectFolder, listOutputProjects, writeProjectJson } from "../storage/project-files";
 
 const SAFE_PROJECT_ID = /^[a-zA-Z0-9._-]+$/;
 
@@ -50,7 +49,6 @@ export function normalizeProjectInitInput(input: ProjectInitInput): NormalizedPr
 
 export async function buildProjectId(): Promise<string> {
   console.log("[buildProjectId] start");
-  const outputRoot = await ensureOutputRoot();
   const now = new Date();
   const prefix = `${now.getFullYear().toString()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(
     now.getHours(),
@@ -58,11 +56,10 @@ export async function buildProjectId(): Promise<string> {
 
   let maxIndex = 0;
   try {
-    const entries = await fs.readdir(outputRoot, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      if (!entry.name.startsWith(prefix)) continue;
-      const parts = entry.name.split("-");
+    const projects = await listOutputProjects();
+    for (const project of projects) {
+      if (!project.id.startsWith(prefix)) continue;
+      const parts = project.id.split("-");
       const indexStr = parts[2];
       const index = Number(indexStr);
       if (!Number.isNaN(index)) {
@@ -70,7 +67,7 @@ export async function buildProjectId(): Promise<string> {
       }
     }
   } catch (err) {
-    console.warn("[buildProjectId] unable to scan output root", err);
+    console.warn("[buildProjectId] unable to scan output projects", err);
   }
 
   const nextIndex = maxIndex + 1;
@@ -101,7 +98,6 @@ export async function resolveProjectId(requested?: string | null): Promise<strin
 }
 
 export async function previewNextProjectId(): Promise<string> {
-  const outputRoot = await ensureOutputRoot();
   const now = new Date();
   const prefix = `${now.getFullYear().toString()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(
     now.getHours(),
@@ -109,11 +105,10 @@ export async function previewNextProjectId(): Promise<string> {
 
   let maxIndex = 0;
   try {
-    const entries = await fs.readdir(outputRoot, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      if (!entry.name.startsWith(prefix)) continue;
-      const parts = entry.name.split("-");
+    const projects = await listOutputProjects();
+    for (const project of projects) {
+      if (!project.id.startsWith(prefix)) continue;
+      const parts = project.id.split("-");
       const indexStr = parts[2];
       const index = Number(indexStr);
       if (!Number.isNaN(index)) {
@@ -121,7 +116,7 @@ export async function previewNextProjectId(): Promise<string> {
       }
     }
   } catch (err) {
-    console.warn("[previewNextProjectId] unable to scan output root", err);
+    console.warn("[previewNextProjectId] unable to scan output projects", err);
   }
 
   const nextIndex = maxIndex + 1;

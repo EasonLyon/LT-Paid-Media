@@ -1,7 +1,5 @@
-import fs from "fs/promises";
-import path from "path";
 import { ScoredKeywordRecord, Tier, TieringMode, UnifiedKeywordRecord } from "@/types/sem";
-import { ensureProjectFolder, readProjectJson, writeProjectJson, writeProjectProgress } from "../storage/project-files";
+import { readProjectJson, writeProjectJson, writeProjectProgress, writeProjectText } from "../storage/project-files";
 
 type Step6Status = "running" | "done" | "error";
 type Step6Phase = "loading_input" | "computing_percentiles" | "scoring_keywords" | "finalizing" | "error";
@@ -289,8 +287,7 @@ export async function buildKeywordScores(projectId: string, tieringMode: Tiering
         ].join(","),
       ),
     ];
-    const folder = await ensureProjectFolder(projectId);
-    await fs.writeFile(path.join(folder, "08-tier-a-paid-keywords.csv"), csvLines.join("\n"), "utf8");
+    await writeProjectText(projectId, "08-tier-a-paid-keywords.csv", csvLines.join("\n"), "text/csv; charset=utf-8");
 
     await writeStep6Progress(projectId, startTimestamp, {
       phase: "finalizing",

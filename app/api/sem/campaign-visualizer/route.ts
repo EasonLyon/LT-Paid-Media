@@ -1,4 +1,3 @@
-import fs from "fs/promises";
 import path from "path";
 import { NextResponse } from "next/server";
 import {
@@ -8,7 +7,16 @@ import {
   NormalizedProjectInitInput,
   ScoredKeywordRecord,
 } from "@/types/sem";
-import { ensureProjectFolder, listOutputProjects, projectFilePath, readProjectJson } from "@/lib/storage/project-files";
+import {
+  listOutputProjects,
+  listProjectFileSummaries,
+  projectFileExists,
+  projectFilePath,
+  readProjectJson,
+  readProjectText,
+  writeProjectJson,
+  writeProjectText,
+} from "@/lib/storage/project-files";
 
 const SAFE_NAME = /^[a-zA-Z0-9._-]+$/;
 const PLAN_PREFIX = "10-";
@@ -46,49 +54,42 @@ async function findLatestProjectWithPlan(): Promise<{ projectId: string; fileNam
 async function resolveCampaignPlanFile(
   projectId: string,
   fileName?: string | null,
-): Promise<{ fileName: string; fullPath: string; source: PlanSource }> {
+): Promise<{ fileName: string; source: PlanSource }> {
   assertSafeName(projectId, "projectId");
-  const folder = path.join(process.cwd(), "output", projectId);
-  try {
-    await fs.access(folder);
-  } catch {
-    throw new Error(`Project folder ${projectId} not found. Choose a different projectId.`);
-  }
+  const summaries = await listProjectFileSummaries(projectId);
+  const fileNames = summaries.map((entry) => entry.name);
 
   if (fileName) {
     assertSafeName(fileName, "file");
-    const fullPath = path.join(folder, fileName);
-    try {
-      await fs.access(fullPath);
-    } catch {
+    if (!fileNames.includes(fileName)) {
       throw new Error(`File ${fileName} not found for project ${projectId}`);
     }
     const source: PlanSource = fileName.startsWith(ENRICHED_PREFIX) ? "enriched" : "base";
-    return { fileName, fullPath, source };
+    return { fileName, source };
   }
 
-  const entries = await fs.readdir(folder);
-  const enrichedCandidate = entries.find((entry) => entry.startsWith(ENRICHED_PREFIX) && entry.endsWith(".json"));
+  const enrichedCandidate = fileNames.find((entry) => entry.startsWith(ENRICHED_PREFIX) && entry.endsWith(".json"));
   if (enrichedCandidate) {
-    return { fileName: enrichedCandidate, fullPath: path.join(folder, enrichedCandidate), source: "enriched" };
+    return { fileName: enrichedCandidate, source: "enriched" };
   }
-  const baseCandidate = entries.find((entry) => entry.startsWith(PLAN_PREFIX) && entry.endsWith(".json"));
+  const baseCandidate = fileNames.find((entry) => entry.startsWith(PLAN_PREFIX) && entry.endsWith(".json"));
   if (baseCandidate) {
-    return { fileName: baseCandidate, fullPath: path.join(folder, baseCandidate), source: "base" };
+    return { fileName: baseCandidate, source: "base" };
   }
   throw new Error(`No 10-*.json or 11-*.json plan found for project ${projectId}.`);
 }
 
-async function ensureBackup(fullPath: string, fileName: string): Promise<string | null> {
+async function ensureBackup(projectId: string, fileName: string): Promise<string | null> {
   if (!fileName.startsWith(PLAN_PREFIX)) return null;
   const backupName = fileName.replace(/\.json$/i, ".backup.json");
-  const backupPath = path.join(path.dirname(fullPath), backupName);
+  const exists = await projectFileExists(projectId, backupName);
+  if (exists) return backupName;
   try {
-    await fs.access(backupPath);
-    return path.basename(backupPath);
+    const content = await readProjectText(projectId, fileName);
+    await writeProjectText(projectId, backupName, content, "application/json; charset=utf-8");
+    return backupName;
   } catch {
-    await fs.copyFile(fullPath, backupPath);
-    return path.basename(backupPath);
+    return null;
   }
 }
 
@@ -161,12 +162,10 @@ function enrichCampaigns(campaigns: CampaignPlan[], metricsMap: Map<string, Scor
   }));
 }
 
-async function writeEnrichedPlan(projectId: string, campaigns: CampaignPlan[]): Promise<{ fileName: string; fullPath: string }> {
-  const folder = await ensureProjectFolder(projectId);
-  const fullPath = path.join(folder, ENRICHED_NAME);
+async function writeEnrichedPlan(projectId: string, campaigns: CampaignPlan[]): Promise<{ fileName: string }> {
   const payload: CampaignPlanPayload = { Campaigns: campaigns };
-  await fs.writeFile(fullPath, JSON.stringify(payload, null, 2), "utf8");
-  return { fileName: path.basename(fullPath), fullPath };
+  const savedPath = await writeProjectJson(projectId, "11", "campaign-plan-enriched.json", payload);
+  return { fileName: path.basename(savedPath) };
 }
 
 export async function GET(req: Request) {
@@ -186,9 +185,9 @@ export async function GET(req: Request) {
       projectId = latest.projectId;
     }
 
-    const { fileName, fullPath, source } = await resolveCampaignPlanFile(projectId, file);
-    const backupFileName = await ensureBackup(fullPath, fileName);
-    const raw = await fs.readFile(fullPath, "utf8");
+    const { fileName, source } = await resolveCampaignPlanFile(projectId, file);
+    const backupFileName = await ensureBackup(projectId, fileName);
+    const raw = await readProjectText(projectId, fileName);
     const parsed = JSON.parse(raw) as CampaignPlanPayload | CampaignPlan[];
     const campaigns = normalizeCampaigns(parsed);
     if (!campaigns.length) {
@@ -197,7 +196,7 @@ export async function GET(req: Request) {
 
     const metricsMap = await loadKeywordMetrics(projectId);
     const enrichedCampaigns = enrichCampaigns(campaigns, metricsMap);
-    const target = source === "enriched" ? { fileName, fullPath } : await writeEnrichedPlan(projectId, enrichedCampaigns);
+    const target = source === "enriched" ? { fileName } : await writeEnrichedPlan(projectId, enrichedCampaigns);
     const normalizedInput = await loadNormalizedInput(projectId);
 
     return NextResponse.json({
@@ -231,14 +230,14 @@ export async function PUT(req: Request) {
     }
 
     const safeFileName = fileName && SAFE_NAME.test(fileName) ? fileName : ENRICHED_NAME;
-    const targetPath = projectFilePath(projectId, safeFileName);
-    await ensureProjectFolder(projectId);
     const payload: CampaignPlanPayload = { Campaigns: campaigns };
-    await fs.writeFile(targetPath, JSON.stringify(payload, null, 2), "utf8");
+    const content = JSON.stringify(payload, null, 2);
+    await writeProjectText(projectId, safeFileName, content, "application/json; charset=utf-8");
 
     return NextResponse.json({
       projectId,
-      fileName: path.basename(targetPath),
+      fileName: path.basename(safeFileName),
+      path: projectFilePath(projectId, safeFileName),
       campaignsCount: campaigns.length,
       savedAt: new Date().toISOString(),
     });

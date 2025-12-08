@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { fetchSearchVolumeBatches } from "@/lib/dataforseo/search-volume";
 import { buildEnrichedKeywords } from "@/lib/sem/enrich-search-volume";
-import { flattenKeywordsWithCategories } from "@/lib/sem/keywords";
+import { flattenKeywordsWithCategories, sanitizeKeywordForSearchVolume } from "@/lib/sem/keywords";
 import { readProjectJson, writeProjectJson, writeProjectProgress } from "@/lib/storage/project-files";
 import { supabaseAdmin } from "@/lib/supabase/client";
-import { EnrichedKeywordRecord, InitialKeywordJson } from "@/types/sem";
+import { EnrichedKeywordRecord, InitialKeywordJson, KeywordCategoryMap } from "@/types/sem";
 import { tqdm } from "node-console-progress-bar-tqdm";
 
 type Step2ProgressInfo = {
@@ -66,7 +66,20 @@ export async function POST(req: Request) {
     const initialJson = await readProjectJson<InitialKeywordJson>(projectId, "01-initial-keyword-clusters.json");
     const { keywords, categoryMap } = flattenKeywordsWithCategories(initialJson);
 
-    const { responses, skipped } = await fetchSearchVolumeBatches(keywords, {
+    const sanitizedKeywords: string[] = [];
+    const sanitizedCategoryMap: KeywordCategoryMap = { ...categoryMap };
+    const seenSanitized = new Set<string>();
+    for (const kw of keywords) {
+      const sanitized = sanitizeKeywordForSearchVolume(kw);
+      if (!sanitized) continue;
+      if (seenSanitized.has(sanitized)) continue;
+      seenSanitized.add(sanitized);
+      sanitizedKeywords.push(sanitized);
+      const info = categoryMap[kw];
+      if (info) sanitizedCategoryMap[sanitized] = info;
+    }
+
+    const { responses, skipped } = await fetchSearchVolumeBatches(sanitizedKeywords, {
       onProgress: async (info) => {
         latestProgress = info;
         await writeProgress(info);
@@ -74,7 +87,7 @@ export async function POST(req: Request) {
     });
     await writeProjectJson(projectId, "02", "dataforseo-search-volume-raw.json", responses);
 
-    const enriched = buildEnrichedKeywords(responses, categoryMap, projectId);
+    const enriched = buildEnrichedKeywords(responses, sanitizedCategoryMap, projectId);
     await writeProjectJson(projectId, "03", "keywords-enriched-with-search-volume.json", enriched);
     await writeProjectJson(projectId, "04", "keywords-enriched-all.json", enriched);
 
@@ -86,7 +99,7 @@ export async function POST(req: Request) {
 
     console.log("[Step2] complete");
     return NextResponse.json({
-      totalKeywords: keywords.length,
+      totalKeywords: sanitizedKeywords.length,
       skipped,
       enrichedCount: enriched.length,
       filteredCount: enriched.length,

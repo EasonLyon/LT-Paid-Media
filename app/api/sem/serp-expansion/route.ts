@@ -1,13 +1,11 @@
 import { NextResponse } from "next/server";
-import fs from "fs/promises";
 import { getDataForSeoClient } from "@/lib/dataforseo/client";
 import { extractSerpNewKeywords, extractTopUrls } from "@/lib/sem/serp-expansion";
 import {
   readProjectJson,
+  readProjectProgress,
   writeProjectJson,
   writeProjectProgress,
-  projectFilePath,
-  readProjectProgress,
 } from "@/lib/storage/project-files";
 import {
   EnrichedKeywordRecord,
@@ -84,16 +82,10 @@ export async function POST(req: Request) {
       });
     }
 
-    let existingResult: SerpExpansionResult = { new_keywords: [], top_organic_urls: [] };
-    try {
-      const rawExisting = await fs.readFile(
-        projectFilePath(projectId, "05-serp-new-keywords-and-top-urls.json"),
-        "utf8",
-      );
-      existingResult = JSON.parse(rawExisting) as SerpExpansionResult;
-    } catch {
-      // ignore
-    }
+    const existingResult =
+      (await readProjectJson<SerpExpansionResult>(projectId, "05-serp-new-keywords-and-top-urls.json").catch(
+        () => null,
+      )) ?? { new_keywords: [], top_organic_urls: [] };
 
     let done = startIndex;
     const writeProg = async (completed: number, keyword: string | null, final = false) => {

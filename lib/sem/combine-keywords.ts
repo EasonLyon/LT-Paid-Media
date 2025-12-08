@@ -1,7 +1,13 @@
-import { EnrichedKeywordRecord, SerpExpansionResult, SiteKeywordRecord, UnifiedKeywordRecord } from "@/types/sem";
+import {
+  EnrichedKeywordRecord,
+  SerpExpansionResult,
+  SiteKeywordRecord,
+  UnifiedKeywordRecord,
+} from "@/types/sem";
 import { fetchSearchVolumeBatches } from "../dataforseo/search-volume";
 import { buildEnrichedKeywords } from "./enrich-search-volume";
 import { readProjectJson, writeProjectJson } from "../storage/project-files";
+import { sanitizeKeywordForSearchVolume } from "./keywords";
 
 export function dedupeKeywords(records: UnifiedKeywordRecord[]): UnifiedKeywordRecord[] {
   const deduped = new Map<string, UnifiedKeywordRecord>();
@@ -14,27 +20,36 @@ export function dedupeKeywords(records: UnifiedKeywordRecord[]): UnifiedKeywordR
   return Array.from(deduped.values());
 }
 
-const normalizeSpell = (keyword: string) => keyword.trim().toLowerCase();
+const normalizeSpell = (keyword: string) => sanitizeKeywordForSearchVolume(keyword).toLowerCase();
 
 async function enrichSerpKeywordsWithSearchVolume(
   projectId: string,
   serpKeywords: string[],
   existingNormalized: Set<string>,
+  onProgress?: (info: { processedKeywords: number; totalKeywords: number }) => void | Promise<void>,
 ) {
   const uniqueKeywords: string[] = [];
   const seen = new Set<string>();
 
   for (const kw of serpKeywords) {
-    const normalized = normalizeSpell(kw);
-    if (!normalized || existingNormalized.has(normalized) || seen.has(normalized)) continue;
+    const sanitized = sanitizeKeywordForSearchVolume(kw);
+    const normalized = normalizeSpell(sanitized);
+    if (!sanitized || !normalized || existingNormalized.has(normalized) || seen.has(normalized)) continue;
     seen.add(normalized);
-    uniqueKeywords.push(kw.trim());
+    uniqueKeywords.push(sanitized);
   }
 
   if (uniqueKeywords.length === 0) return [];
 
   console.log(`[Step5] fetching search volume for ${uniqueKeywords.length} serp keyword(s)`);
-  const { responses, skipped } = await fetchSearchVolumeBatches(uniqueKeywords);
+  const { responses, skipped } = await fetchSearchVolumeBatches(uniqueKeywords, {
+    onProgress: async (info) => {
+      await onProgress?.({
+        processedKeywords: info.processedKeywords,
+        totalKeywords: info.totalKeywords,
+      });
+    },
+  });
   if (skipped.length) {
     const sample = skipped.slice(0, 5).join(", ");
     console.warn(
@@ -105,14 +120,19 @@ function filterKeywords(records: UnifiedKeywordRecord[]): UnifiedKeywordRecord[]
   });
 }
 
+type CombineProgressInfo = {
+  processedKeywords?: number;
+  totalKeywords?: number;
+};
+
 export async function buildCombinedKeywordList(
   projectId: string,
-  onProgress?: (completed: number, target?: string) => Promise<void> | void,
+  onProgress?: (completed: number, target?: string, info?: CombineProgressInfo) => Promise<void> | void,
 ): Promise<UnifiedKeywordRecord[]> {
   console.log("[Step5] combine start");
   const totalSteps = 5;
-  const step = async (count: number, target: string) => {
-    if (onProgress) await onProgress(count, target);
+  const step = async (count: number, target: string, info?: CombineProgressInfo) => {
+    if (onProgress) await onProgress(count, target, info);
   };
 
   await step(0, "start");
@@ -125,15 +145,21 @@ export async function buildCombinedKeywordList(
   const serpPromise = readProjectJson<SerpExpansionResult>(projectId, "05-serp-new-keywords-and-top-urls.json");
 
   const [enriched, siteKeywords, serp] = await Promise.all([enrichedPromise, sitePromise, serpPromise]);
-  await step(1, "loaded_sources");
+  const estimatedTotal = enriched.length + siteKeywords.length + (serp?.new_keywords?.length ?? 0);
+  await step(1, "loaded_sources", { totalKeywords: estimatedTotal, processedKeywords: 0 });
 
   const existingNormalized = new Set<string>();
   for (const rec of enriched) existingNormalized.add(normalizeSpell(rec.keyword));
   for (const rec of siteKeywords) existingNormalized.add(normalizeSpell(rec.keyword));
 
   const newKeywords: string[] = serp?.new_keywords ?? [];
-  const serpEnriched = await enrichSerpKeywordsWithSearchVolume(projectId, newKeywords, existingNormalized);
-  await step(2, "serp_search_volume");
+  const serpEnriched = await enrichSerpKeywordsWithSearchVolume(projectId, newKeywords, existingNormalized, (info) =>
+    step(2, "serp_search_volume", info),
+  );
+  await step(2, "serp_search_volume", {
+    processedKeywords: serpEnriched.length,
+    totalKeywords: serpEnriched.length,
+  });
 
   const unified: UnifiedKeywordRecord[] = [];
   unified.push(...enriched.map(mapEnrichedToUnified));

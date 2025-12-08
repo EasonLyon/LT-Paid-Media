@@ -1,7 +1,5 @@
-import fs from "fs/promises";
-import path from "path";
 import { CampaignStructureRow, ScoredKeywordRecord, Tier } from "@/types/sem";
-import { ensureProjectFolder, readProjectJson } from "../storage/project-files";
+import { projectFilePath, readProjectJson, writeProjectText } from "../storage/project-files";
 
 const OUTPUT_FILE = "09-google-ads-campaign-structure.csv";
 
@@ -87,16 +85,14 @@ export async function buildCampaignStructure(projectId: string, options: BuildCa
   const rows = buildRows(scoredRecords, options);
   const csv = rowsToCsv(rows);
 
-  const folder = await ensureProjectFolder(projectId);
-  const filePath = path.join(folder, OUTPUT_FILE);
-  await fs.writeFile(filePath, csv, "utf8");
+  const filePath = await writeProjectText(projectId, OUTPUT_FILE, csv, "text/csv; charset=utf-8");
 
   return {
     rows,
     previewRows: rows.slice(0, 5),
     csv,
     fileName: OUTPUT_FILE,
-    filePath,
+    filePath: projectFilePath(projectId, OUTPUT_FILE),
     totalRows: rows.length,
   };
 }

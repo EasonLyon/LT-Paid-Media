@@ -34,7 +34,12 @@ export async function POST(req: Request) {
 
     const totalSteps: number = 5;
     const startTimestamp = existingProgress?.startTimestamp ?? Date.now();
-    const writeProg = async (completed: number, target: string | null, final = false) => {
+    const writeProg = async (
+      completed: number,
+      target: string | null,
+      meta?: { final?: boolean; processedKeywords?: number; totalKeywords?: number; status?: "running" | "done" },
+    ) => {
+      const final = meta?.final ?? false;
       const percent = totalSteps === 0 ? 100 : Math.round((completed / totalSteps) * 100);
       await writeProjectProgress(projectId, "step5-progress.json", {
         step: 5,
@@ -44,17 +49,23 @@ export async function POST(req: Request) {
         percent,
         timestamp: new Date().toISOString(),
         startTimestamp,
+        status: meta?.status ?? (final ? "done" : "running"),
         nextPollMs: final ? 0 : 1000,
+        processedKeywords: meta?.processedKeywords,
+        totalKeywords: meta?.totalKeywords,
       });
     };
 
     await writeProg(0, "start");
 
-    const combined = await buildCombinedKeywordList(projectId, async (completed, target) => {
-      await writeProg(completed, target ?? null);
+    const combined = await buildCombinedKeywordList(projectId, async (completed, target, info) => {
+      await writeProg(completed, target ?? null, {
+        processedKeywords: info?.processedKeywords,
+        totalKeywords: info?.totalKeywords,
+      });
     });
 
-    await writeProg(totalSteps, null, true);
+    await writeProg(totalSteps, null, { final: true, status: "done" });
     console.log("[Step5] complete");
     return NextResponse.json({ total: combined.length });
   } catch (error: unknown) {

@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CampaignPlan, CampaignStructureRow, NormalizedProjectInitInput, ProjectInitInput, Tier } from "@/types/sem";
 
 type StepResponse = Record<string, unknown>;
@@ -202,18 +202,31 @@ async function callApi<T extends StepResponse = StepResponse>(endpoint: string, 
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   });
-  const json = (await res.json()) as unknown;
+  const raw = await res.text();
+
+  let parsed: unknown;
+  try {
+    parsed = raw ? (JSON.parse(raw) as unknown) : {};
+  } catch (err) {
+    const snippet = raw.trim().slice(0, 200).replace(/\s+/g, " ");
+    const parseMessage = err instanceof Error ? err.message : "Unknown parse failure";
+    const summary = snippet ? ` Response preview: "${snippet}"` : " Response was empty.";
+    throw new Error(
+      `Unexpected non-JSON response from /api/sem/${endpoint}: ${parseMessage}.${summary} (status ${res.status})`,
+    );
+  }
+
   if (!res.ok) {
-    const parsed = json as StepResponse;
-    const messageFromError = typeof parsed.error === "string" ? parsed.error : undefined;
+    const parsedStep = parsed as StepResponse;
+    const messageFromError = typeof parsedStep.error === "string" ? parsedStep.error : undefined;
     const messageFromMessage =
-      typeof (parsed as { message?: string }).message === "string"
-        ? (parsed as { message: string }).message
+      typeof (parsedStep as { message?: string }).message === "string"
+        ? (parsedStep as { message: string }).message
         : undefined;
     const message = messageFromError ?? messageFromMessage ?? res.statusText;
     throw new Error(message);
   }
-  return json as T;
+  return parsed as T;
 }
 
 function buildLocalProjectIdFallback(): string {
@@ -308,6 +321,20 @@ export default function SemPage() {
   } | null>(null);
   const confirmResolver = useRef<((value: boolean) => void) | null>(null);
   const hasUserSetProjectIdRef = useRef(false);
+
+  const stepCompletion = useMemo(
+    () => ({
+      start: availableFiles.some((file) => file.startsWith("00-")),
+      search: availableFiles.some((file) => file.startsWith("03-keywords-enriched-with-search-volume")),
+      serp: availableFiles.some((file) => file.startsWith("05-")),
+      site: availableFiles.some((file) => file.startsWith("06-site-keywords-from-top-domains")),
+      combine: availableFiles.some((file) => file.startsWith("07-all-keywords-combined-deduped")),
+      score: availableFiles.some((file) => file.startsWith("08-")),
+      campaign: availableFiles.some((file) => file.startsWith("09-")),
+      campaignPlan: availableFiles.some((file) => file.startsWith("10-") || file.startsWith("11-")),
+    }),
+    [availableFiles],
+  );
 
   const askConfirm = (title: string, message: string, confirmLabel = "Rerun", cancelLabel = "Use existing") =>
     new Promise<boolean>((resolve) => {
@@ -703,22 +730,47 @@ export default function SemPage() {
   }, [projectId, refreshProjectFiles]);
 
   useEffect(() => {
-    const hasPlan =
-      availableFiles.some((file) => file.startsWith("10-") && file.endsWith(".json")) ||
-      availableFiles.some((file) => file.startsWith("11-") && file.endsWith(".json"));
-    setStepStatuses((prev) => ({
-      ...prev,
-      visualizer: {
-        status: hasPlan ? "success" : "idle",
-        message: hasPlan ? "10/11 plan ready" : "Run Step 8 to generate plan",
-      },
-    }));
-  }, [availableFiles]);
+    setStepStatuses((prev) => {
+      let changed = false;
+      const next: typeof prev = { ...prev };
+      const markComplete = (key: keyof typeof stepCompletion, message: string) => {
+        if (!stepCompletion[key]) return;
+        const current = next[key];
+        if (current.status === "running") return;
+        if (current.status === "success" && current.message === message) return;
+        next[key] = { status: "success", message };
+        changed = true;
+      };
 
-  const runStep = async (endpoint: string, label: string) => {
+      markComplete("start", "Inputs ready");
+      markComplete("search", "Search volume ready");
+      markComplete("serp", "SERP expansion ready");
+      markComplete("site", "Site keywords ready");
+      markComplete("combine", "Combined keywords ready");
+      markComplete("score", "Keyword scores ready");
+      markComplete("campaign", "Campaign CSV ready");
+      markComplete("campaignPlan", "Plan ready for QA");
+
+      const visualizerStatus: StepStatus = stepCompletion.campaignPlan
+        ? { status: "success", message: "10/11 plan ready" }
+        : { status: "idle", message: "Run Step 8 to generate plan" };
+      if (
+        next.visualizer.status !== visualizerStatus.status ||
+        next.visualizer.message !== visualizerStatus.message
+      ) {
+        next.visualizer = visualizerStatus;
+        changed = true;
+      }
+
+      return changed ? next : prev;
+    });
+  }, [stepCompletion]);
+
+  const runStep = async (endpoint: string, label: string, options?: { manageBusy?: boolean }) => {
+    const manageBusy = options?.manageBusy ?? true;
     if (!projectId) {
       push("Provide projectId first");
-      return;
+      return false;
     }
     // Step 3 pre-checks for resume / rerun
     let force = false;
@@ -732,10 +784,11 @@ export default function SemPage() {
       if (!decision.allow) return;
       force = decision.force;
     }
-    setIsBusy(true);
+    if (manageBusy) setIsBusy(true);
     const isSerp = endpoint === "serp-expansion";
     const isStep2 = endpoint === "search-volume";
     const isStep4 = endpoint === "site-keywords";
+    const isStep5 = endpoint === "combine";
     const isStep6 = endpoint === "keyword-scoring";
     if (isSerp) {
       startStep3Polling(projectId);
@@ -743,6 +796,8 @@ export default function SemPage() {
       startStep2Polling(projectId);
     } else if (isStep4) {
       startStep4Polling(projectId);
+    } else if (isStep5) {
+      startStep5Polling(projectId);
     } else if (isStep6) {
       startStep6Polling(projectId);
     } else {
@@ -756,6 +811,7 @@ export default function SemPage() {
       push(`${label} success: ${JSON.stringify(res)}`);
       updateStepStatus(mapEndpointToKey(endpoint), { status: "success", message: `${label} success` });
       succeeded = true;
+      refreshProjectFiles(projectId);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
       push(`${label} failed: ${message}`);
@@ -767,13 +823,29 @@ export default function SemPage() {
         stopStep2Polling(succeeded);
       } else if (isStep4) {
         stopStep4Polling(succeeded);
+      } else if (isStep5) {
+        stopStep5Polling(succeeded);
       } else if (isStep6) {
         stopStep6Polling(succeeded);
       } else {
         stopProgress(succeeded);
       }
-      setIsBusy(false);
+      if (manageBusy) setIsBusy(false);
     }
+    return succeeded;
+  };
+
+  const openVisualizerTab = () => {
+    const href = `/sem/visualizer${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`;
+    const newWindow = window.open(href, "_blank", "noreferrer");
+    if (!newWindow) {
+      push("Unable to open visualization (popup blocked?). Please open manually.");
+      updateStepStatus("visualizer", { status: "success", message: "Open visualizer manually" });
+      return true;
+    }
+    push("Opened visualization workspace in a new tab");
+    updateStepStatus("visualizer", { status: "success", message: "Visualizer opened" });
+    return true;
   };
 
   const runAllSteps = async () => {
@@ -782,65 +854,80 @@ export default function SemPage() {
       return;
     }
     setIsBusy(true);
-    const sequence: Array<{ endpoint: string; label: string }> = [
-      { endpoint: "search-volume", label: "Step 2 – Search Volume" },
-      { endpoint: "serp-expansion", label: "Step 3 – SERP Expansion" },
-      { endpoint: "site-keywords", label: "Step 4 – Keywords for Site" },
-      { endpoint: "combine", label: "Step 5 – Combine & Dedupe" },
-      { endpoint: "keyword-scoring", label: "Step 6 – Keyword Scoring" },
+    const sequence: Array<{
+      key: StepKey;
+      label: string;
+      run: (options?: { manageBusy?: boolean }) => Promise<boolean>;
+      isComplete: () => boolean;
+    }> = [
+      {
+        key: "search",
+        label: "Step 2 – Search Volume",
+        run: (options) => runStep("search-volume", "Step 2 – Search Volume", options),
+        isComplete: () => stepCompletion.search,
+      },
+      {
+        key: "serp",
+        label: "Step 3 – SERP Expansion",
+        run: (options) => runStep("serp-expansion", "Step 3 – SERP Expansion", options),
+        isComplete: () => stepCompletion.serp,
+      },
+      {
+        key: "site",
+        label: "Step 4 – Keywords for Site",
+        run: (options) => runStep("site-keywords", "Step 4 – Keywords for Site", options),
+        isComplete: () => stepCompletion.site,
+      },
+      {
+        key: "combine",
+        label: "Step 5 – Combine & Dedupe",
+        run: (options) => runStep("combine", "Step 5 – Combine & Dedupe", options),
+        isComplete: () => stepCompletion.combine,
+      },
+      {
+        key: "score",
+        label: "Step 6 – Keyword Scoring",
+        run: (options) => runStep("keyword-scoring", "Step 6 – Keyword Scoring", options),
+        isComplete: () => stepCompletion.score,
+      },
+      {
+        key: "campaign",
+        label: "Step 7 – Campaign Structure",
+        run: (options) => runCampaignStructureStep(options),
+        isComplete: () => stepCompletion.campaign,
+      },
+      {
+        key: "campaignPlan",
+        label: "Step 8 – Campaign Plan",
+        run: (options) => runCampaignPlanStep(options),
+        isComplete: () => stepCompletion.campaignPlan,
+      },
+      {
+        key: "visualizer",
+        label: "Step 9 – Visualize & QA",
+        run: async () => {
+          openVisualizerTab();
+          return true;
+        },
+        isComplete: () => false,
+      },
     ];
 
+    let completedAll = true;
     try {
       for (const step of sequence) {
-        updateStepStatus(mapEndpointToKey(step.endpoint), { status: "running", message: step.label });
-        push(`Running ${step.label}`);
-        const isSerp = step.endpoint === "serp-expansion";
-        const isStep2 = step.endpoint === "search-volume";
-        const isStep4 = step.endpoint === "site-keywords";
-        const isStep6 = step.endpoint === "keyword-scoring";
-        let force = false;
-        if (step.endpoint === "serp-expansion") {
-          const decision = await evaluateStep3(projectId);
-          if (!decision.allow) {
-            push("Skipping Step 3 (already completed and user declined rerun)");
-            continue;
-          }
-          force = decision.force;
-          startStep3Polling(projectId);
-        } else if (step.endpoint === "site-keywords") {
-          const decision = await evaluateStep4(projectId);
-          if (!decision.allow) {
-            push("Skipping Step 4 (already completed and user declined rerun)");
-            continue;
-          }
-          force = decision.force;
-          startStep4Polling(projectId);
-        } else if (isStep2) {
-          startStep2Polling(projectId);
-        } else if (isStep6) {
-          startStep6Polling(projectId);
-        } else {
-          startProgress();
+        if (step.isComplete()) {
+          push(`Skipping ${step.label} (already done)`);
+          updateStepStatus(step.key, { status: "success", message: "Using existing output" });
+          continue;
         }
-        try {
-          const res = await callApi(step.endpoint, { projectId, force });
-          push(`${step.label} success: ${JSON.stringify(res)}`);
-          updateStepStatus(mapEndpointToKey(step.endpoint), { status: "success", message: "Done" });
-          if (isSerp) stopStep3Polling(true);
-          else if (isStep2) stopStep2Polling(true);
-          if (isStep4) stopStep4Polling(true);
-          if (isStep6) stopStep6Polling(true);
-          if (!isSerp && !isStep2 && !isStep4 && !isStep6) stopProgress(true);
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : "Unknown error";
-          push(`${step.label} failed: ${message}`);
-          updateStepStatus(mapEndpointToKey(step.endpoint), { status: "error", message });
-          if (isSerp) stopStep3Polling(false);
-          else if (isStep2) stopStep2Polling(false);
-          else if (isStep4) stopStep4Polling(false);
-          else if (isStep6) stopStep6Polling(false);
-          else stopProgress(false);
-          throw err;
+        updateStepStatus(step.key, { status: "running", message: step.label });
+        push(`Running ${step.label}`);
+        const success = await step.run({ manageBusy: false });
+        if (!success) {
+          push(`Run all halted at ${step.label}`);
+          completedAll = false;
+          break;
         }
       }
     } catch (err: unknown) {
@@ -848,7 +935,11 @@ export default function SemPage() {
       push(`Run all failed: ${message}`);
       cancelStepProgressPoll();
       stopProgress(false);
+      completedAll = false;
     } finally {
+      if (completedAll) {
+        push("Run all steps finished");
+      }
       setIsBusy(false);
     }
   };
@@ -949,11 +1040,13 @@ export default function SemPage() {
   };
 
   // Step 2 polling with adaptive interval
+  const MIN_PROGRESS_POLL_INTERVAL_MS = 1000;
+
   const startStep2Polling = (pid: string) => {
     stopProgress(false);
     cancelStepProgressPoll();
     pollStartRef.current = Date.now();
-    scheduleStepProgressPoll("step2", pid, 800);
+    scheduleStepProgressPoll("step2", pid, MIN_PROGRESS_POLL_INTERVAL_MS);
   };
 
   const stopStep2Polling = (complete: boolean) => {
@@ -987,6 +1080,19 @@ export default function SemPage() {
     stopProgress(complete);
   };
 
+  // Step 5 polling with adaptive interval
+  const startStep5Polling = (pid: string) => {
+    stopProgress(false);
+    cancelStepProgressPoll();
+    pollStartRef.current = Date.now();
+    scheduleStepProgressPoll("step5", pid, 1000);
+  };
+
+  const stopStep5Polling = (complete: boolean) => {
+    cancelStepProgressPoll();
+    stopProgress(complete);
+  };
+
   // Step 6 polling with adaptive interval
   const startStep6Polling = (pid: string) => {
     stopProgress(false);
@@ -1011,7 +1117,7 @@ export default function SemPage() {
   };
 
   const scheduleStepProgressPoll = (
-    step: "step2" | "step3" | "step4" | "step6",
+    step: "step2" | "step3" | "step4" | "step5" | "step6",
     pid: string,
     nextDelay: number,
   ) => {
@@ -1020,20 +1126,23 @@ export default function SemPage() {
         ? fetchStep3Progress
         : step === "step4"
         ? fetchStep4Progress
+        : step === "step5"
+        ? fetchStep5Progress
         : step === "step6"
         ? fetchStep6Progress
         : fetchStep2Progress;
+    const delay = Math.max(nextDelay, MIN_PROGRESS_POLL_INTERVAL_MS);
     pollTimer.current = window.setTimeout(async () => {
       const elapsed = Date.now() - pollStartRef.current;
       const isEarly = elapsed < 10000;
-      const fallback = isEarly ? 1000 : 4000;
+      const fallback = Math.max(isEarly ? 1000 : 4000, MIN_PROGRESS_POLL_INTERVAL_MS);
       const nextMs = await pollFn(pid, nextDelay || fallback);
       if (nextMs === null) {
         cancelStepProgressPoll();
         return;
       }
-      scheduleStepProgressPoll(step, pid, nextMs ?? fallback);
-    }, nextDelay);
+      scheduleStepProgressPoll(step, pid, Math.max(nextMs ?? fallback, MIN_PROGRESS_POLL_INTERVAL_MS));
+    }, delay);
   };
 
   const fetchStep2Progress = async (pid: string, fallback: number): Promise<number> => {
@@ -1071,13 +1180,18 @@ export default function SemPage() {
     }
   };
 
-  const fetchStep3Progress = async (pid: string, fallback: number): Promise<number> => {
+  const fetchStep3Progress = async (pid: string, fallback: number): Promise<number | null> => {
     try {
       const res = await fetch(`/api/sem/step3-progress?projectId=${encodeURIComponent(pid)}`);
       if (!res.ok) return fallback;
-      const json = (await res.json()) as { percent?: number; nextPollMs?: number };
+      const json = (await res.json()) as { percent?: number; nextPollMs?: number; hasResultFile?: boolean };
       if (typeof json.percent === "number") {
         setProgress(Math.min(Math.max(json.percent, 0), 100));
+      }
+      const isComplete = (json.percent ?? 0) >= 100 || json.hasResultFile;
+      if (isComplete) {
+        updateStepStatus("serp", { status: "success", message: "Step 3 complete" });
+        return null;
       }
       return typeof json.nextPollMs === "number" ? json.nextPollMs : fallback;
     } catch {
@@ -1094,14 +1208,56 @@ export default function SemPage() {
         nextPollMs?: number;
         status?: "pending" | "running" | "done" | "error";
         errorMessage?: string;
+        hasResultFile?: boolean;
       };
       if (typeof json.percent === "number") {
         setProgress(Math.min(Math.max(json.percent, 0), 100));
       }
       const status: StepStatus["status"] =
         json.status === "done" ? "success" : json.status === "error" ? "error" : "running";
+      const isComplete = status === "success" || (json.percent ?? 0) >= 100 || json.hasResultFile;
       updateStepStatus("site", { status, message: json.errorMessage });
-      if (status === "success" || status === "error") {
+      if (isComplete || status === "error") {
+        return null;
+      }
+      return typeof json.nextPollMs === "number" ? json.nextPollMs : fallback;
+    } catch {
+      return fallback;
+    }
+  };
+
+  const fetchStep5Progress = async (pid: string, fallback: number): Promise<number | null> => {
+    try {
+      const res = await fetch(`/api/sem/step5-progress?projectId=${encodeURIComponent(pid)}`);
+      if (!res.ok) return fallback;
+      const json = (await res.json()) as {
+        percent?: number;
+        nextPollMs?: number;
+        status?: "pending" | "running" | "done" | "error";
+        target?: string | null;
+        hasResultFile?: boolean;
+        processedKeywords?: number | null;
+        totalKeywords?: number | null;
+      };
+      if (typeof json.percent === "number") {
+        setProgress(Math.min(Math.max(json.percent, 0), 100));
+      }
+      const isComplete = (json.percent ?? 0) >= 100 || json.hasResultFile;
+      const status: StepStatus["status"] = isComplete
+        ? "success"
+        : json.status === "error"
+        ? "error"
+        : "running";
+      const processed = typeof json.processedKeywords === "number" ? json.processedKeywords : null;
+      const total = typeof json.totalKeywords === "number" ? json.totalKeywords : null;
+      const countLabel =
+        processed !== null && total !== null ? ` (${processed}/${total} keywords)` : processed !== null ? ` (${processed})` : "";
+      const phaseLabel = json.target ? `Phase: ${json.target}` : undefined;
+      updateStepStatus("combine", {
+        status,
+        message: phaseLabel ? `${phaseLabel}${countLabel}` : countLabel || undefined,
+      });
+      if (isComplete || status === "error") {
         return null;
       }
       return typeof json.nextPollMs === "number" ? json.nextPollMs : fallback;
@@ -1248,13 +1404,14 @@ export default function SemPage() {
     });
   };
 
-  const handleCampaignStructure = async () => {
+  const runCampaignStructureStep = async (options?: { manageBusy?: boolean }) => {
+    const manageBusy = options?.manageBusy ?? true;
     if (!projectId) {
       push("Provide projectId first");
-      return;
+      return false;
     }
     const filters = getSelectedCampaignFilters();
-    setIsBusy(true);
+    if (manageBusy) setIsBusy(true);
     startProgress();
     updateStepStatus("campaign", { status: "running", message: "Building campaign CSV" });
     push(
@@ -1294,6 +1451,7 @@ export default function SemPage() {
         } to ${json.fileName ?? "campaign CSV"}`,
       );
       updateStepStatus("campaign", { status: "success", message: `${totalRows} rows` });
+      refreshProjectFiles(projectId);
       completed = true;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
@@ -1301,8 +1459,13 @@ export default function SemPage() {
       updateStepStatus("campaign", { status: "error", message });
     } finally {
       stopProgress(completed);
-      setIsBusy(false);
+      if (manageBusy) setIsBusy(false);
     }
+    return completed;
+  };
+
+  const handleCampaignStructure = async () => {
+    await runCampaignStructureStep();
   };
 
   const handleDownloadCampaignCsv = async () => {
@@ -1382,17 +1545,19 @@ export default function SemPage() {
     return lines.join("\n");
   };
 
-  const handleGenerateCampaignPlan = async () => {
+  const runCampaignPlanStep = async (options?: { manageBusy?: boolean }) => {
+    const manageBusy = options?.manageBusy ?? true;
     if (!projectId) {
       push("Provide projectId first");
-      return;
+      return false;
     }
-    setIsBusy(true);
+    if (manageBusy) setIsBusy(true);
     setProgress(0);
     setCampaignPlanResult(null);
     startStep8Timer();
     updateStepStatus("campaignPlan", { status: "running", message: "Waiting for OpenAI" });
     push("Step 8 – Generating campaign plan from 09-google-ads-campaign-structure.csv");
+    let completed = false;
     try {
       const res = await fetch("/api/sem/campaign-plan", {
         method: "POST",
@@ -1410,14 +1575,20 @@ export default function SemPage() {
       push(`Step 8 completed. Saved to ${fileName}.\n${tree}`);
       updateStepStatus("campaignPlan", { status: "success", message: `${campaigns.length} campaigns` });
       refreshProjectFiles(projectId);
+      completed = true;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
       push(`Step 8 failed: ${message}`);
       updateStepStatus("campaignPlan", { status: "error", message });
     } finally {
       stopStep8Timer();
-      setIsBusy(false);
+      if (manageBusy) setIsBusy(false);
     }
+    return completed;
+  };
+
+  const handleGenerateCampaignPlan = async () => {
+    await runCampaignPlanStep();
   };
 
   const filteredFiles = availableFiles
@@ -1680,65 +1851,73 @@ export default function SemPage() {
               isOpen={openSections.runSteps}
               onToggle={() => toggleSection("runSteps")}
             >
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                {[
-                  { endpoint: "search-volume", label: "Step 2 – Search Volume", key: "search" as StepKey },
-                  { endpoint: "serp-expansion", label: "Step 3 – SERP Expansion", key: "serp" as StepKey },
-                  { endpoint: "site-keywords", label: "Step 4 – Keywords for Site", key: "site" as StepKey },
-                  { endpoint: "combine", label: "Step 5 – Combine & Dedupe", key: "combine" as StepKey },
-                  { endpoint: "keyword-scoring", label: "Step 6 – Keyword Scoring", key: "score" as StepKey },
-                ].map((step) => {
-                  const state = stepStatuses[step.key];
-                  const statusLabel =
-                    state.status === "running"
-                      ? "Running"
-                      : state.status === "success"
-                      ? "Done"
-                      : state.status === "error"
-                      ? "Error"
-                      : "Idle";
-                  return (
-                    <button
-                      key={step.endpoint}
-                      className={`border rounded px-3 py-2 text-left disabled:opacity-50 ${
-                        state.status === "running"
-                          ? "border-blue-300 bg-blue-50"
-                          : state.status === "error"
-                          ? "border-red-300 bg-red-50"
-                          : "bg-white"
-                      }`}
-                      disabled={isBusy || !projectId}
-                      onClick={() => runStep(step.endpoint, step.label)}
-                    >
-                      <div className="font-medium">{step.label}</div>
-                      <div className="text-xs text-gray-600 flex items-center gap-2">
-                        <span
-                          className={`inline-block h-2 w-2 rounded-full ${
-                            state.status === "running"
-                              ? "bg-blue-500 animate-pulse"
-                              : state.status === "success"
-                              ? "bg-green-500"
-                              : state.status === "error"
-                              ? "bg-red-500"
-                              : "bg-gray-400"
-                          }`}
-                        />
-                        <span>{statusLabel}</span>
-                      </div>
-                    </button>
-                  );
-                })}
-                <button
-                  className="rounded px-3 py-2 bg-blue-600 text-white disabled:opacity-50"
-                  disabled={isBusy || !projectId}
-                  onClick={runAllSteps}
-                >
-                  Run All (2→6)
-                </button>
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-sm text-gray-700">
+                    Runs steps 2-9 sequentially, skipping completed steps and resuming if interrupted. Finishes by
+                    opening the visualizer.
+                  </div>
+                  <button
+                    className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-50"
+                    disabled={isBusy || !projectId}
+                    onClick={runAllSteps}
+                  >
+                    {isBusy ? "Working..." : "Run All Steps (2-9)"}
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {[
+                    { endpoint: "search-volume", label: "Step 2 – Search Volume", key: "search" as StepKey },
+                    { endpoint: "serp-expansion", label: "Step 3 – SERP Expansion", key: "serp" as StepKey },
+                    { endpoint: "site-keywords", label: "Step 4 – Keywords for Site", key: "site" as StepKey },
+                    { endpoint: "combine", label: "Step 5 – Combine & Dedupe", key: "combine" as StepKey },
+                    { endpoint: "keyword-scoring", label: "Step 6 – Keyword Scoring", key: "score" as StepKey },
+                  ].map((step) => {
+                    const state = stepStatuses[step.key];
+                    const statusLabel =
+                      state.status === "running"
+                        ? "Running"
+                        : state.status === "success"
+                        ? "Done"
+                        : state.status === "error"
+                        ? "Error"
+                        : "Idle";
+                    return (
+                      <button
+                        key={step.endpoint}
+                        className={`border rounded px-3 py-2 text-left disabled:opacity-50 ${
+                          state.status === "running"
+                            ? "border-blue-300 bg-blue-50"
+                            : state.status === "error"
+                            ? "border-red-300 bg-red-50"
+                            : "bg-white"
+                        }`}
+                        disabled={isBusy || !projectId}
+                        onClick={() => runStep(step.endpoint, step.label)}
+                      >
+                        <div className="font-medium">{step.label}</div>
+                        <div className="text-xs text-gray-600 flex items-center gap-2">
+                          <span
+                            className={`inline-block h-2 w-2 rounded-full ${
+                              state.status === "running"
+                                ? "bg-blue-500 animate-pulse"
+                                : state.status === "success"
+                                ? "bg-green-500"
+                                : state.status === "error"
+                                ? "bg-red-500"
+                                : "bg-gray-400"
+                            }`}
+                          />
+                          <span>{statusLabel}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                {!projectId && (
+                  <div className="text-xs text-gray-600 mt-2">Enter a projectId above to enable these actions.</div>
+                )}
               </div>
-              {!projectId && (
-                <div className="text-xs text-gray-600 mt-2">Enter a projectId above to enable these actions.</div>
-              )}
             </CollapsibleSection>
 
             <CollapsibleSection

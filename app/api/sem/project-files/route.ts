@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-import fs from "fs/promises";
-import path from "path";
-import { ensureProjectFolder, projectFilePath } from "@/lib/storage/project-files";
+import { listProjectFileSummaries, projectFilePath, readOutputFile, writeProjectText } from "@/lib/storage/project-files";
 
 const SAFE_FILENAME = /^[a-zA-Z0-9._-]+$/;
 const DEFAULT_EXTENSIONS = [".json"];
@@ -35,27 +33,25 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "projectId is required" }, { status: 400 });
   }
 
-  const projectFolder = path.join(process.cwd(), "output", projectId);
   const headers = { "cache-control": "no-store" };
 
   if (!file) {
     try {
-      const entries = await fs.readdir(projectFolder, { withFileTypes: true });
-      const files = entries
+      const summaries = await listProjectFileSummaries(projectId);
+      const files = summaries
         .filter((entry) => {
-          if (!entry.isFile()) return false;
           if (includeAll) return true;
           const allowed = extensionFilters.length > 0 ? extensionFilters : DEFAULT_EXTENSIONS;
           return allowed.some((ext) => entry.name.toLowerCase().endsWith(ext));
         })
-        .map((entry) => entry.name)
-        .sort();
-      return NextResponse.json({ files }, { headers });
+        .map((entry) => entry.name);
+      return NextResponse.json({ files: files.sort() }, { headers });
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
         return NextResponse.json({ files: [] }, { headers });
       }
-      const message = err instanceof Error ? err.message : "Unable to read project folder";
+      const message = err instanceof Error ? err.message : "Unable to read project files";
       return NextResponse.json({ error: message }, { status: 500, headers });
     }
   }
@@ -65,20 +61,11 @@ export async function GET(req: Request) {
   }
 
   try {
-    const fullPath = projectFilePath(projectId, file);
-    const raw = await fs.readFile(fullPath, "utf8");
-    const parsedFromRaw = (() => {
-      try {
-        return JSON.parse(raw);
-      } catch {
-        return null;
-      }
-    })();
-    const isJson = parsedFromRaw !== null;
+    const { content, isJson, parsed } = await readOutputFile(projectId, file);
 
     if (mode === "download") {
       const contentType = inferContentType(file);
-      return new NextResponse(raw, {
+      return new NextResponse(content, {
         headers: {
           ...headers,
           "content-type": contentType,
@@ -88,13 +75,13 @@ export async function GET(req: Request) {
     }
 
     if (mode === "text") {
-      return NextResponse.json({ file, content: raw, isJson, parsed: parsedFromRaw }, { headers });
+      return NextResponse.json({ file, content, isJson, parsed }, { headers });
     }
 
-    if (!isJson || parsedFromRaw === null) {
+    if (!isJson || parsed === null) {
       return NextResponse.json({ error: "File is not valid JSON" }, { status: 400, headers });
     }
-    return NextResponse.json({ file, data: parsedFromRaw }, { headers });
+    return NextResponse.json({ file, data: parsed }, { headers });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "ENOENT") {
@@ -130,10 +117,11 @@ export async function PUT(req: Request) {
   }
 
   try {
-    await ensureProjectFolder(projectId);
-    const fullPath = projectFilePath(projectId, file);
-    await fs.writeFile(fullPath, content, "utf8");
-    return NextResponse.json({ saved: true, file }, { headers: { "cache-control": "no-store" } });
+    await writeProjectText(projectId, file, content, inferContentType(file));
+    return NextResponse.json(
+      { saved: true, file, path: projectFilePath(projectId, file) },
+      { headers: { "cache-control": "no-store" } },
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unable to save file";
     return NextResponse.json({ error: message }, { status: 500 });

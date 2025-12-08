@@ -1,8 +1,19 @@
 import fs from "fs/promises";
 import path from "path";
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  _Object,
+} from "@aws-sdk/client-s3";
+import { Readable } from "stream";
+import { getR2Client, isR2Enabled } from "./r2";
 
 const OUTPUT_ROOT = path.join(process.cwd(), "output");
 const SAFE_ENTRY_NAME = /^[a-zA-Z0-9._-]+$/;
+const storageMode: "r2" | "local" = isR2Enabled ? "r2" : "local";
 
 export type OutputFileSummary = {
   name: string;
@@ -18,20 +29,119 @@ export type OutputProjectSummary = {
   websiteDomain?: string | null;
 };
 
+function assertSafeName(value: string, label: string) {
+  if (!SAFE_ENTRY_NAME.test(value) || value.includes("..") || value.includes("/") || value.includes("\\")) {
+    throw new Error(`Invalid ${label}`);
+  }
+}
+
+async function streamToString(body: unknown): Promise<string> {
+  if (!body) return "";
+  const candidate = body as { transformToString?: () => Promise<string> };
+  if (typeof candidate.transformToString === "function") {
+    return candidate.transformToString();
+  }
+  const readable = body as Readable;
+  const chunks: Buffer[] = [];
+  for await (const chunk of readable) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function objectKey(projectId: string, filename: string): string {
+  assertSafeName(projectId, "project id");
+  assertSafeName(filename, "file name");
+  return `${projectId}/${filename}`;
+}
+
+async function listAllObjects(prefix?: string): Promise<_Object[]> {
+  const { client, bucket } = getR2Client();
+  let token: string | undefined;
+  const results: _Object[] = [];
+  do {
+    const response = await client.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        ContinuationToken: token,
+      }),
+    );
+    (response.Contents ?? []).forEach((item) => results.push(item));
+    token = response.IsTruncated ? response.NextContinuationToken ?? undefined : undefined;
+  } while (token);
+  return results;
+}
+
 export async function ensureOutputRoot(): Promise<string> {
-  await fs.mkdir(OUTPUT_ROOT, { recursive: true });
-  return OUTPUT_ROOT;
+  if (storageMode === "local") {
+    await fs.mkdir(OUTPUT_ROOT, { recursive: true });
+    return OUTPUT_ROOT;
+  }
+  return getR2Client().bucket;
 }
 
 export async function ensureProjectFolder(projectId: string): Promise<string> {
-  const root = await ensureOutputRoot();
-  const folder = path.join(root, projectId);
-  await fs.mkdir(folder, { recursive: true });
-  return folder;
+  assertSafeName(projectId, "project id");
+  if (storageMode === "local") {
+    const root = await ensureOutputRoot();
+    const folder = path.join(root, projectId);
+    await fs.mkdir(folder, { recursive: true });
+    return folder;
+  }
+  return projectId;
 }
 
 export function projectFilePath(projectId: string, filename: string): string {
-  return path.join(OUTPUT_ROOT, projectId, filename);
+  if (storageMode === "local") {
+    return path.join(OUTPUT_ROOT, projectId, filename);
+  }
+  return objectKey(projectId, filename);
+}
+
+async function writeProjectFile(
+  projectId: string,
+  filename: string,
+  content: string,
+  contentType?: string,
+): Promise<string> {
+  const target = projectFilePath(projectId, filename);
+  if (storageMode === "local") {
+    const folder = await ensureProjectFolder(projectId);
+    const fullPath = path.join(folder, filename);
+    await fs.writeFile(fullPath, content, "utf8");
+    return fullPath;
+  }
+  const { client, bucket } = getR2Client();
+  await client.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: target,
+      Body: content,
+      ContentType: contentType ?? "text/plain; charset=utf-8",
+    }),
+  );
+  return target;
+}
+
+async function readProjectFile(projectId: string, filename: string): Promise<string> {
+  const target = projectFilePath(projectId, filename);
+  if (storageMode === "local") {
+    return fs.readFile(target, "utf8");
+  }
+  const { client, bucket } = getR2Client();
+  try {
+    const response = await client.send(
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: target,
+      }),
+    );
+    return streamToString(response.Body);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    throw new Error(`Unable to read ${filename}: ${message}`);
+  }
 }
 
 export async function writeProjectJson(
@@ -40,18 +150,25 @@ export async function writeProjectJson(
   filename: string,
   data: unknown,
 ): Promise<string> {
-  const folder = await ensureProjectFolder(projectId);
   const prefix = typeof index === "number" ? index.toString().padStart(2, "0") : index;
   const finalName = `${prefix}-${filename}`;
-  const target = path.join(folder, finalName);
-  await fs.writeFile(target, JSON.stringify(data, null, 2), "utf8");
-  return target;
+  const payload = JSON.stringify(data, null, 2);
+  return writeProjectFile(projectId, finalName, payload, "application/json; charset=utf-8");
 }
 
 export async function readProjectJson<T>(projectId: string, filename: string): Promise<T> {
-  const fullPath = projectFilePath(projectId, filename);
-  const raw = await fs.readFile(fullPath, "utf8");
-  return JSON.parse(raw) as T;
+  const raw = await readProjectFile(projectId, filename);
+  try {
+    return JSON.parse(raw) as T;
+  } catch (err) {
+    const prefix = raw.trim().slice(0, 80);
+    const looksLikeHtml = prefix.startsWith("<");
+    const parsedMessage = err instanceof Error ? err.message : "Unknown JSON parse error";
+    const hint = looksLikeHtml
+      ? "Received HTML instead of JSON (likely an error page or corrupted file)."
+      : "Unable to parse JSON content.";
+    throw new Error(`Unable to parse ${filename}: ${parsedMessage}. ${hint}`);
+  }
 }
 
 export async function writeProjectProgress(
@@ -59,73 +176,75 @@ export async function writeProjectProgress(
   filename: string,
   data: unknown,
 ): Promise<string> {
-  const folder = await ensureProjectFolder(projectId);
-  const target = path.join(folder, filename);
-  await fs.writeFile(target, JSON.stringify(data, null, 2), "utf8");
-  return target;
+  const payload = JSON.stringify(data, null, 2);
+  return writeProjectFile(projectId, filename, payload, "application/json; charset=utf-8");
 }
 
 export async function readProjectProgress<T>(projectId: string, filename: string): Promise<T | null> {
   try {
-    const fullPath = projectFilePath(projectId, filename);
-    const raw = await fs.readFile(fullPath, "utf8");
+    const raw = await readProjectFile(projectId, filename);
     return JSON.parse(raw) as T;
   } catch {
     return null;
   }
 }
 
-function assertSafeName(value: string, label: string) {
-  if (!SAFE_ENTRY_NAME.test(value) || value.includes("..") || value.includes("/") || value.includes("\\")) {
-    throw new Error(`Invalid ${label}`);
+export async function projectFileExists(projectId: string, filename: string): Promise<boolean> {
+  const target = projectFilePath(projectId, filename);
+  if (storageMode === "local") {
+    try {
+      await fs.access(target);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  const { client, bucket } = getR2Client();
+  try {
+    await client.send(
+      new HeadObjectCommand({
+        Bucket: bucket,
+        Key: target,
+      }),
+    );
+    return true;
+  } catch {
+    return false;
   }
 }
 
-export async function listOutputProjects(): Promise<OutputProjectSummary[]> {
-  const root = await ensureOutputRoot();
-  const entries = await fs.readdir(root, { withFileTypes: true });
+async function listProjectFiles(projectId: string): Promise<OutputFileSummary[]> {
+  assertSafeName(projectId, "project id");
+  if (storageMode === "local") {
+    const folder = path.join(OUTPUT_ROOT, projectId);
+    const entries = await fs.readdir(folder, { withFileTypes: true });
+    const summaries = await Promise.all(
+      entries
+        .filter((entry) => entry.isFile())
+        .map(async (entry) => {
+          const fullPath = path.join(folder, entry.name);
+          const stats = await fs.stat(fullPath);
+          return { name: entry.name, size: stats.size, modifiedMs: stats.mtimeMs };
+        }),
+    );
+    return summaries;
+  }
 
-  const projects = await Promise.all(
-    entries
-      .filter((entry) => entry.isDirectory() && SAFE_ENTRY_NAME.test(entry.name))
-      .map(async (entry) => {
-        const folder = path.join(root, entry.name);
-        const stats = await fs.stat(folder);
-        const createdMs =
-          (Number.isFinite(stats.birthtimeMs) && stats.birthtimeMs > 0
-            ? stats.birthtimeMs
-            : Number.isFinite(stats.ctimeMs)
-            ? stats.ctimeMs
-            : null) ?? stats.mtimeMs;
-        const files = await fs.readdir(folder, { withFileTypes: true });
-        const hasUserInput = files.some((file) => file.isFile() && file.name === "00-user-input.json");
-        const websiteDomain = hasUserInput
-          ? await extractWebsiteDomain(path.join(folder, "00-user-input.json"))
-          : null;
-        const summaries = await Promise.all(
-          files
-            .filter((file) => file.isFile())
-            .map(async (file) => {
-              const fullPath = path.join(folder, file.name);
-              const stats = await fs.stat(fullPath);
-              return { name: file.name, size: stats.size, modifiedMs: stats.mtimeMs };
-            }),
-        );
-        const totalSize = summaries.reduce((sum, file) => sum + file.size, 0);
-        return {
-          id: entry.name,
-          files: summaries.sort((a, b) => a.name.localeCompare(b.name)),
-          totalSize,
-          createdMs,
-          websiteDomain,
-        };
-      }),
-  );
-
-  return projects.sort((a, b) => {
-    if (a.createdMs !== b.createdMs) return b.createdMs - a.createdMs;
-    return b.id.localeCompare(a.id);
-  });
+  const objects = await listAllObjects(`${projectId}/`);
+  return objects
+    .map((item) => {
+      const key = item.Key ?? "";
+      const parts = key.split("/");
+      if (parts.length < 2) return null;
+      const fileName = parts.slice(1).join("/");
+      if (!fileName || !SAFE_ENTRY_NAME.test(fileName)) return null;
+      return {
+        name: fileName,
+        size: item.Size ?? 0,
+        modifiedMs: item.LastModified ? item.LastModified.getTime() : Date.now(),
+      };
+    })
+    .filter((entry): entry is OutputFileSummary => Boolean(entry));
 }
 
 function normalizeDomain(value: string): string | null {
@@ -148,13 +267,12 @@ function normalizeDomainFromUrl(input: string): string | null {
   }
 }
 
-async function extractWebsiteDomain(filePath: string): Promise<string | null> {
+async function extractWebsiteDomain(projectId: string): Promise<string | null> {
   try {
-    const raw = await fs.readFile(filePath, "utf8");
-    const parsed = JSON.parse(raw) as {
+    const parsed = await readProjectJson<{
       rawInput?: { website?: unknown };
       normalizedInput?: { website?: unknown };
-    };
+    }>(projectId, "00-user-input.json");
     const website =
       (typeof parsed?.normalizedInput?.website === "string" && parsed.normalizedInput.website) ||
       (typeof parsed?.rawInput?.website === "string" && parsed.rawInput.website);
@@ -165,35 +283,144 @@ async function extractWebsiteDomain(filePath: string): Promise<string | null> {
   }
 }
 
+export async function listOutputProjects(): Promise<OutputProjectSummary[]> {
+  if (storageMode === "local") {
+    const root = await ensureOutputRoot();
+    const entries = await fs.readdir(root, { withFileTypes: true });
+
+    const projects = await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory() && SAFE_ENTRY_NAME.test(entry.name))
+        .map(async (entry) => {
+          const folder = path.join(root, entry.name);
+          const stats = await fs.stat(folder);
+          const createdMs =
+            (Number.isFinite(stats.birthtimeMs) && stats.birthtimeMs > 0
+              ? stats.birthtimeMs
+              : Number.isFinite(stats.ctimeMs)
+              ? stats.ctimeMs
+              : null) ?? stats.mtimeMs;
+          const files = await listProjectFiles(entry.name);
+          const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+          const websiteDomain = await extractWebsiteDomain(entry.name);
+          return {
+            id: entry.name,
+            files: files.sort((a, b) => a.name.localeCompare(b.name)),
+            totalSize,
+            createdMs,
+            websiteDomain,
+          };
+        }),
+    );
+
+    return projects.sort((a, b) => {
+      if (a.createdMs !== b.createdMs) return b.createdMs - a.createdMs;
+      return b.id.localeCompare(a.id);
+    });
+  }
+
+  const objects = await listAllObjects();
+  const projectMap = new Map<string, { files: OutputFileSummary[]; createdMs: number }>();
+  for (const item of objects) {
+    const key = item.Key ?? "";
+    const parts = key.split("/");
+    if (parts.length < 2) continue;
+    const [projectId, ...rest] = parts;
+    if (!SAFE_ENTRY_NAME.test(projectId)) continue;
+    const fileName = rest.join("/");
+    if (!fileName || !SAFE_ENTRY_NAME.test(fileName)) continue;
+
+    const entry = projectMap.get(projectId) ?? { files: [], createdMs: Number.POSITIVE_INFINITY };
+    const modifiedMs = item.LastModified ? item.LastModified.getTime() : Date.now();
+    entry.files.push({
+      name: fileName,
+      size: item.Size ?? 0,
+      modifiedMs,
+    });
+    entry.createdMs = Math.min(entry.createdMs, modifiedMs);
+    projectMap.set(projectId, entry);
+  }
+
+  const projects: OutputProjectSummary[] = [];
+  for (const [id, data] of projectMap.entries()) {
+    const websiteDomain = await extractWebsiteDomain(id);
+    const totalSize = data.files.reduce((sum, file) => sum + file.size, 0);
+    projects.push({
+      id,
+      files: data.files.sort((a, b) => a.name.localeCompare(b.name)),
+      totalSize,
+      createdMs: data.createdMs === Number.POSITIVE_INFINITY ? Date.now() : data.createdMs,
+      websiteDomain,
+    });
+  }
+
+  return projects.sort((a, b) => {
+    if (a.createdMs !== b.createdMs) return b.createdMs - a.createdMs;
+    return b.id.localeCompare(a.id);
+  });
+}
+
 export async function deleteOutputFile(projectId: string, filename: string): Promise<boolean> {
   assertSafeName(projectId, "project id");
   assertSafeName(filename, "file name");
-  const fullPath = projectFilePath(projectId, filename);
+  const target = projectFilePath(projectId, filename);
 
+  if (storageMode === "local") {
+    try {
+      const stats = await fs.stat(target);
+      if (!stats.isFile()) {
+        throw new Error("Target is not a file");
+      }
+      await fs.unlink(target);
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  const { client, bucket } = getR2Client();
   try {
-    const stats = await fs.stat(fullPath);
-    if (!stats.isFile()) {
-      throw new Error("Target is not a file");
-    }
-    await fs.unlink(fullPath);
+    await client.send(
+      new DeleteObjectCommand({
+        Bucket: bucket,
+        Key: target,
+      }),
+    );
     return true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return false;
-    }
-    throw err;
+  } catch {
+    return false;
   }
 }
 
 export async function deleteOutputProject(projectId: string): Promise<boolean> {
   assertSafeName(projectId, "project id");
-  const folder = path.join(OUTPUT_ROOT, projectId);
-  try {
-    await fs.access(folder);
-  } catch {
-    return false;
+  if (storageMode === "local") {
+    const folder = path.join(OUTPUT_ROOT, projectId);
+    try {
+      await fs.access(folder);
+    } catch {
+      return false;
+    }
+    await fs.rm(folder, { recursive: true, force: true });
+    return true;
   }
-  await fs.rm(folder, { recursive: true, force: true });
+
+  const objects = await listAllObjects(`${projectId}/`);
+  if (!objects.length) return false;
+  const { client, bucket } = getR2Client();
+  await Promise.all(
+    objects.map((item) =>
+      client.send(
+        new DeleteObjectCommand({
+          Bucket: bucket,
+          Key: item.Key,
+        }),
+      ),
+    ),
+  );
   return true;
 }
 
@@ -204,20 +431,29 @@ export async function readOutputFile(projectId: string, filename: string): Promi
 }> {
   assertSafeName(projectId, "project id");
   assertSafeName(filename, "file name");
-  const fullPath = projectFilePath(projectId, filename);
-  let content: string;
-  try {
-    content = await fs.readFile(fullPath, "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new Error("File not found");
-    }
-    throw err;
-  }
+  const content = await readProjectFile(projectId, filename);
   try {
     const parsed = JSON.parse(content);
     return { content, isJson: true, parsed };
   } catch {
     return { content, isJson: false, parsed: null };
   }
+}
+
+export async function writeProjectText(
+  projectId: string,
+  filename: string,
+  content: string,
+  contentType?: string,
+): Promise<string> {
+  return writeProjectFile(projectId, filename, content, contentType);
+}
+
+export async function listProjectFileSummaries(projectId: string): Promise<OutputFileSummary[]> {
+  const files = await listProjectFiles(projectId);
+  return files.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function readProjectText(projectId: string, filename: string): Promise<string> {
+  return readProjectFile(projectId, filename);
 }

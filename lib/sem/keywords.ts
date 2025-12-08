@@ -9,6 +9,20 @@ export function isValidKeyword(kw: string): boolean {
   return true;
 }
 
+// Prefer Unicode-aware cleaning, but fall back to ASCII-only if the runtime
+// does not support Unicode property escapes (avoids "Range out of order" errors).
+const searchVolumeSanitizePattern: RegExp = (() => {
+  try {
+    return new RegExp("[^\\p{L}\\p{N}\\s'+\\-.,/&()]", "gu");
+  } catch {
+    return /[^A-Za-z0-9\s'+\-.,/&()]/g;
+  }
+})();
+
+export function sanitizeKeywordForSearchVolume(kw: string): string {
+  return kw.replace(searchVolumeSanitizePattern, " ").replace(/\s+/g, " ").trim();
+}
+
 export function chunkArray<T>(arr: T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let i = 0; i < arr.length; i += size) {

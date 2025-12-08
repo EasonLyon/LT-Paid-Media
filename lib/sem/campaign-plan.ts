@@ -1,8 +1,7 @@
-import fs from "fs/promises";
 import path from "path";
 import { fetchCampaignPlan } from "@/lib/openai/campaign-plan";
 import { CampaignPlanPayload, NormalizedProjectInitInput } from "@/types/sem";
-import { ensureProjectFolder, readProjectJson, writeProjectJson } from "../storage/project-files";
+import { projectFilePath, readProjectJson, readProjectText, writeProjectJson } from "../storage/project-files";
 const INPUT_FILE = "00-user-input.json";
 const KEYWORD_CSV_FILE = "09-google-ads-campaign-structure.csv";
 const OUTPUT_FILE = "campaign-plan.json";
@@ -23,10 +22,8 @@ async function loadNormalizedInput(projectId: string): Promise<NormalizedProject
 }
 
 async function loadKeywordCsv(projectId: string): Promise<string> {
-  const folder = await ensureProjectFolder(projectId);
-  const csvPath = path.join(folder, KEYWORD_CSV_FILE);
   try {
-    return await fs.readFile(csvPath, "utf8");
+    return await readProjectText(projectId, KEYWORD_CSV_FILE);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     throw new Error(`Unable to read ${KEYWORD_CSV_FILE}. Run Step 7 first. (${message})`);
@@ -79,6 +76,6 @@ export async function generateCampaignPlan(projectId: string) {
   return {
     campaigns: indexedCampaigns,
     fileName: path.basename(filePath),
-    filePath,
+    filePath: projectFilePath(projectId, path.basename(filePath)),
   };
 }
