@@ -766,7 +766,11 @@ export default function SemPage() {
     });
   }, [stepCompletion]);
 
-  const runStep = async (endpoint: string, label: string, options?: { manageBusy?: boolean }) => {
+  const runStep = async (
+    endpoint: string,
+    label: string,
+    options?: { manageBusy?: boolean },
+  ): Promise<boolean> => {
     const manageBusy = options?.manageBusy ?? true;
     if (!projectId) {
       push("Provide projectId first");
@@ -776,12 +780,12 @@ export default function SemPage() {
     let force = false;
     if (endpoint === "serp-expansion") {
       const decision = await evaluateStep3(projectId);
-      if (!decision.allow) return;
+      if (!decision.allow) return false;
       force = decision.force;
     }
     if (endpoint === "site-keywords") {
       const decision = await evaluateStep4(projectId);
-      if (!decision.allow) return;
+      if (!decision.allow) return false;
       force = decision.force;
     }
     if (manageBusy) setIsBusy(true);
