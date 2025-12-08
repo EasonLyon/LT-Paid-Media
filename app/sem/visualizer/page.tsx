@@ -326,6 +326,24 @@ function CampaignVisualizerPageContent() {
   const mermaidRenderId = useRef(0);
   const [salesValueAutoSet, setSalesValueAutoSet] = useState(false);
   const [monthlySpendInput, setMonthlySpendInput] = useState<string>("");
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
+
+  const sortedCampaignsByBudget = useMemo(
+    () =>
+      campaigns
+        .map((campaign, idx) => ({ campaign, campaignIdx: idx }))
+        .sort((a, b) => {
+          const budgetA = a.campaign.BudgetDailyMYR ?? -Infinity;
+          const budgetB = b.campaign.BudgetDailyMYR ?? -Infinity;
+          if (budgetA === budgetB) {
+            const nameA = a.campaign.CampaignName ?? `Campaign ${a.campaignIdx + 1}`;
+            const nameB = b.campaign.CampaignName ?? `Campaign ${b.campaignIdx + 1}`;
+            return nameA.localeCompare(nameB);
+          }
+          return budgetB - budgetA;
+        }),
+    [campaigns],
+  );
 
   const updateAssumption = (key: keyof PerformanceAssumptions, rawValue: number) => {
     setAssumptions((prev) => {
@@ -351,6 +369,13 @@ function CampaignVisualizerPageContent() {
       return { ...prev, [key]: value } as PerformanceAssumptions;
     });
   };
+
+  useEffect(() => {
+    const updateViewport = () => setIsMobileViewport(window.innerWidth < 640);
+    updateViewport();
+    window.addEventListener("resize", updateViewport);
+    return () => window.removeEventListener("resize", updateViewport);
+  }, []);
 
   const campaignRows = useMemo<CampaignRow[]>(() => {
     return campaigns.map((campaign, idx) => ({
@@ -643,9 +668,10 @@ function CampaignVisualizerPageContent() {
         const roiWorstLabel = formatPercent(performanceTotals.roiWorst);
         const roiMidLabel = formatPercent(performanceTotals.roiMid);
         const roiBestLabel = formatPercent(performanceTotals.roiBest);
+        const funnelDirection = isMobileViewport ? "TB" : "LR";
 
         const diagram = [
-          "flowchart LR",
+          `flowchart ${funnelDirection}`,
           node("spend", `Ad Spend: ${spendLabel}`),
           node("clicks", `Clicks: ${clicksLabel}`),
           node("worstLeads", `Worst leads (${worstRateLabel}%): ${worstLeadsLabel}`),
@@ -680,7 +706,7 @@ function CampaignVisualizerPageContent() {
     };
 
     void renderDiagram();
-  }, [assumptions.bestConversionRate, assumptions.worstConversionRate, performanceRows, performanceTotals]);
+  }, [assumptions.bestConversionRate, assumptions.worstConversionRate, isMobileViewport, performanceRows, performanceTotals]);
 
   const filteredCampaigns = useMemo(() => {
     const sorted = [...campaignRows].sort((a, b) => {
@@ -1416,7 +1442,7 @@ function CampaignVisualizerPageContent() {
             )}
             <div className="grid md:grid-cols-[1.3fr_1fr] gap-4">
               <div className="space-y-3">
-                {campaigns.map((campaign, campaignIdx) => {
+                {sortedCampaignsByBudget.map(({ campaign, campaignIdx }) => {
                   const isOpen = expandedCampaigns[campaignIdx] ?? true;
                   return (
                     <details

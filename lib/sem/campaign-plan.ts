@@ -36,34 +36,47 @@ export async function generateCampaignPlan(projectId: string) {
   const parsed = await fetchCampaignPlan(normalizedInput, keywordData);
 
   const campaigns = Array.isArray(parsed?.Campaigns) ? parsed.Campaigns : [];
-  const indexedCampaigns = campaigns.map((campaign, campaignIdx) => {
-    const campaignIndex = (campaignIdx + 1).toString().padStart(2, "0");
+  const sortedCampaigns = [...campaigns].sort((a, b) => {
+    const budgetA = a?.BudgetDailyMYR ?? -Infinity;
+    const budgetB = b?.BudgetDailyMYR ?? -Infinity;
+    if (budgetA === budgetB) {
+      const nameA = a?.CampaignName ?? "";
+      const nameB = b?.CampaignName ?? "";
+      return nameA.localeCompare(nameB);
+    }
+    return budgetB - budgetA;
+  });
+
+  const normalizeCampaignName = (name: string, index: string) => {
     const marker = "AI | ";
+    const afterMarker = name.startsWith(marker) ? name.slice(marker.length) : name.replace(/^AI \|\s*/, "");
+    const withoutIndex = afterMarker.replace(/^\d{1,2}\s*\|\s*/, "").trim();
+    const rest = withoutIndex ? ` | ${withoutIndex}` : "";
+    return `${marker}${index}${rest}`;
+  };
+
+  const normalizeAdGroupName = (name: string, index: string) => {
+    const match = name.match(/^(\d{1,2})(?:\s*\|\s*)?(.*)$/);
+    if (match) {
+      const [, existingIndex, restRaw] = match;
+      const normalizedIndex = existingIndex.padStart(2, "0");
+      const rest = (restRaw ?? "").trim();
+      return `${normalizedIndex}${rest ? ` | ${rest}` : ""}`;
+    }
+    const rest = name.trim();
+    return `${index}${rest ? ` | ${rest}` : ""}`;
+  };
+
+  const indexedCampaigns = sortedCampaigns.map((campaign, campaignIdx) => {
+    const campaignIndex = (campaignIdx + 1).toString().padStart(2, "0");
     const campaignName = campaign?.CampaignName ?? "";
-
-    const normalizeNameWithIndex = (name: string, index: string, hasMarker: boolean) => {
-      const prefix = hasMarker ? marker : "";
-      const afterMarker = hasMarker ? name.replace(/^AI \|\s*/, "") : name;
-      const match = afterMarker.match(/^(\d{1,2})(?:\s*\|\s*)?(.*)$/);
-
-      if (match) {
-        const [, existingIndex, restRaw] = match;
-        const normalizedIndex = existingIndex.padStart(2, "0");
-        const rest = (restRaw ?? "").trim();
-        return `${prefix}${normalizedIndex}${rest ? ` | ${rest}` : ""}`;
-      }
-
-      const rest = afterMarker.trim();
-      return `${prefix}${index}${rest ? ` | ${rest}` : ""}`;
-    };
-
-    const updatedCampaignName = normalizeNameWithIndex(campaignName, campaignIndex, campaignName.startsWith(marker));
+    const updatedCampaignName = normalizeCampaignName(campaignName, campaignIndex);
 
     const adGroups = Array.isArray(campaign?.AdGroups) ? campaign.AdGroups : [];
     const indexedAdGroups = adGroups.map((group, groupIdx) => {
       const groupIndex = (groupIdx + 1).toString().padStart(2, "0");
       const groupName = group?.AdGroupName ?? "";
-      const updatedAdGroupName = normalizeNameWithIndex(groupName, groupIndex, false);
+      const updatedAdGroupName = normalizeAdGroupName(groupName, groupIndex);
       return { ...group, AdGroupName: updatedAdGroupName };
     });
 

@@ -21,6 +21,7 @@ export async function POST(req: Request) {
     if (!projectId) {
       return NextResponse.json({ error: "projectId is required" }, { status: 400 });
     }
+    currentProjectId = projectId;
 
     const serpResult = await readProjectJson<SerpExpansionResult>(
       projectId,
@@ -102,7 +103,23 @@ export async function POST(req: Request) {
     await runWithConcurrency(targetsToProcess, concurrency, async (targetUrl) => {
       await limiter();
       lastTarget = targetUrl;
-      const responses = await fetchKeywordsForSites([targetUrl]);
+      let responses: unknown[] = [];
+      try {
+        responses = await fetchKeywordsForSites([targetUrl]);
+      } catch (err) {
+        if (isKeywordsForSiteMissingResultError(err)) {
+          const message = err instanceof Error ? err.message : "missing result";
+          console.warn(`[Step4] skipping ${targetUrl}: ${message}`);
+          done += 1;
+          completed = done;
+          history.push({ target: targetUrl, timestamp: new Date().toISOString(), completed: done });
+          await writeProg(done, targetUrl);
+          progress.update(done);
+          await writeProjectJson(projectId, "06", "site-keywords-from-top-domains.json", Array.from(recordMap.values()));
+          return;
+        }
+        throw err;
+      }
       const normalized = normalizeSiteKeywordRecords(responses, projectId);
       const filtered = normalized.filter((rec) => rec.search_volume !== null && rec.search_volume >= 100);
       for (const rec of filtered) {
@@ -153,6 +170,14 @@ export async function POST(req: Request) {
     }
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+function isKeywordsForSiteMissingResultError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (
+    error.message.includes("[DataForSEO keywords_for_site]") &&
+    error.message.includes("missing result")
+  );
 }
 
 async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (item: T, index: number) => Promise<void>) {
