@@ -143,12 +143,12 @@ interface CollapsibleSectionProps {
 
 function CollapsibleSection({ title, isOpen, onToggle, children }: CollapsibleSectionProps) {
   return (
-    <section className="border rounded-lg">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
-        <h2 className="text-xl font-medium">{title}</h2>
+    <section className="border rounded-lg border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50 dark:border-slate-700 dark:bg-slate-800">
+        <h2 className="text-xl font-medium text-slate-900 dark:text-white">{title}</h2>
         <button
           type="button"
-          className="inline-flex items-center gap-2 border rounded px-3 py-1 text-sm bg-white hover:bg-blue-50 transition-colors"
+          className="inline-flex items-center gap-2 border rounded px-3 py-1 text-sm bg-white hover:bg-blue-50 transition-colors dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
           aria-expanded={isOpen}
           onClick={onToggle}
         >
@@ -1601,32 +1601,34 @@ export default function SemPage() {
   const selectedDownloadCount = filteredFiles.filter((file) => selectedFilesForDownload.has(file)).length;
 
   return (
-    <main className="min-h-screen p-6 flex justify-center">
+    <main className="min-h-screen p-6 flex justify-center bg-gray-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <div className="w-full max-w-6xl space-y-6">
         <header className="space-y-3">
-          <h1 className="text-2xl font-semibold text-center">SEM Keyword Pipeline</h1>
-          <div className="border rounded-lg p-3 bg-gray-50 flex flex-wrap items-center gap-3 text-sm">
+          <h1 className="text-2xl font-semibold text-center text-slate-900 dark:text-white">SEM Keyword Pipeline</h1>
+          <div className="border rounded-lg p-3 bg-gray-50 flex flex-wrap items-center gap-3 text-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="flex items-center gap-2">
-              <span className="font-medium text-gray-700">Project</span>
-              <span className={`px-2 py-1 rounded ${projectId ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}>
+              <span className="font-medium text-gray-700 dark:text-slate-200">Project</span>
+              <span
+                className={`px-2 py-1 rounded ${projectId ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-200" : "bg-gray-200 text-gray-700 dark:bg-slate-800 dark:text-slate-200"}`}
+              >
                 {projectId || "Not set"}
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="font-medium text-gray-700">Filters</span>
-              <span className="px-2 py-1 rounded bg-blue-100 text-blue-800">
+              <span className="font-medium text-gray-700 dark:text-slate-200">Filters</span>
+              <span className="px-2 py-1 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-100">
                 Tiers: {getSelectedCampaignFilters().tiers.join(", ")}
               </span>
-              <span className="px-2 py-1 rounded bg-purple-100 text-purple-800">
+              <span className="px-2 py-1 rounded bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-100">
                 Paid: {getSelectedCampaignFilters().paidFlag ? "true" : "false"}
               </span>
-              <span className="px-2 py-1 rounded bg-amber-100 text-amber-800">
+              <span className="px-2 py-1 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-100">
                 SEO: {getSelectedCampaignFilters().seoFlag ? "true" : "false"}
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="font-medium text-gray-700">Status</span>
-              <span className="px-2 py-1 rounded bg-gray-200 text-gray-700">
+              <span className="font-medium text-gray-700 dark:text-slate-200">Status</span>
+              <span className="px-2 py-1 rounded bg-gray-200 text-gray-700 dark:bg-slate-800 dark:text-slate-200">
                 Last: {Object.values(stepStatuses).some((s) => s.status === "running") ? "Running" : "Idle"}
               </span>
             </div>
@@ -1643,7 +1645,7 @@ export default function SemPage() {
               <label className="grid gap-1">
                 <span>projectId</span>
                 <input
-                  className="border rounded px-3 py-2"
+                  className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                   value={projectId}
                   onChange={(e) => handleProjectIdChange(e.target.value)}
                   placeholder="YYYYMMDD-HH-001"
@@ -1651,11 +1653,11 @@ export default function SemPage() {
                 />
               </label>
               <div className="grid gap-2">
-                <div className="flex items-center justify-between text-sm text-gray-700">
+                <div className="flex items-center justify-between text-sm text-gray-700 dark:text-slate-200">
                   <span>Or select an existing project</span>
                   <button
                     type="button"
-                    className="border rounded px-2 py-1 bg-white hover:bg-blue-50 text-xs disabled:opacity-50"
+                    className="border rounded px-2 py-1 bg-white hover:bg-blue-50 text-xs disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
                     onClick={() => void refreshExistingProjects()}
                     disabled={isFetchingProjects}
                   >
@@ -1663,7 +1665,7 @@ export default function SemPage() {
                   </button>
                 </div>
                 <select
-                  className="border rounded px-3 py-2 text-sm w-full max-w-full truncate"
+                  className="border rounded px-3 py-2 text-sm w-full max-w-full truncate bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                   value={existingProjects.find((p) => p.id === projectId) ? projectId : ""}
                   onChange={(e) => {
                     const value = e.target.value;
@@ -1702,7 +1704,7 @@ export default function SemPage() {
               isOpen={openSections.step1}
               onToggle={() => toggleSection("step1")}
             >
-              <p className="text-sm text-gray-700 leading-relaxed">
+              <p className="text-sm text-gray-700 leading-relaxed dark:text-slate-200">
                 We scrape your website&apos;s public content here to understand your business and brainstorm ad-ready
                 keyword ideas you can run campaigns with.
               </p>
@@ -1711,7 +1713,7 @@ export default function SemPage() {
                   <span>Website (required)</span>
                   <input
                     required
-                    className="border rounded px-3 py-2"
+                    className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                     value={startForm.website}
                     onChange={(e) => setStartForm((prev) => ({ ...prev, website: e.target.value }))}
                     placeholder="https://www.example.com"
@@ -1721,7 +1723,7 @@ export default function SemPage() {
                   <label className="grid gap-1">
                     <span>Goal</span>
                     <select
-                      className="border rounded px-3 py-2"
+                      className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                       value={startForm.goal}
                       onChange={(e) => setStartForm((prev) => ({ ...prev, goal: e.target.value }))}
                     >
@@ -1735,7 +1737,7 @@ export default function SemPage() {
                   <label className="grid gap-1">
                     <span>Location</span>
                     <select
-                      className="border rounded px-3 py-2"
+                      className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                       value={useCustomLocation ? OTHER_VALUE : startForm.location}
                       onChange={(e) => {
                         const value = e.target.value;
@@ -1756,7 +1758,7 @@ export default function SemPage() {
                     </select>
                     {useCustomLocation && (
                       <input
-                        className="border rounded px-3 py-2 mt-2"
+                        className="border rounded px-3 py-2 mt-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                         value={startForm.location}
                         onChange={(e) => setStartForm((prev) => ({ ...prev, location: e.target.value }))}
                         placeholder="Enter a location"
@@ -1768,7 +1770,7 @@ export default function SemPage() {
                   <label className="grid gap-1">
                     <span>State list (comma separated)</span>
                     <input
-                      className="border rounded px-3 py-2"
+                      className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                       value={startForm.state_list}
                       onChange={(e) => setStartForm((prev) => ({ ...prev, state_list: e.target.value }))}
                       placeholder="Selangor, Kuala Lumpur"
@@ -1777,7 +1779,7 @@ export default function SemPage() {
                   <label className="grid gap-1">
                     <span>Language</span>
                     <select
-                      className="border rounded px-3 py-2"
+                      className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                       value={useCustomLanguage ? OTHER_VALUE : startForm.language}
                       onChange={(e) => {
                         const value = e.target.value;
@@ -1798,7 +1800,7 @@ export default function SemPage() {
                     </select>
                     {useCustomLanguage && (
                       <input
-                        className="border rounded px-3 py-2 mt-2"
+                        className="border rounded px-3 py-2 mt-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                         value={startForm.language}
                         onChange={(e) => setStartForm((prev) => ({ ...prev, language: e.target.value }))}
                         placeholder="Enter a language"
@@ -1826,7 +1828,7 @@ export default function SemPage() {
                       type="number"
                       min={MIN_AD_SPEND_MYR}
                       step={500}
-                      className="border rounded px-3 py-2 w-40"
+                      className="border rounded px-3 py-2 w-40 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                       value={adSpendInput}
                       onChange={(e) => handleAdSpendInputChange(e.target.value)}
                       onBlur={handleAdSpendBlur}
@@ -1857,7 +1859,7 @@ export default function SemPage() {
             >
               <div className="flex flex-col gap-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="text-sm text-gray-700">
+                  <div className="text-sm text-gray-700 dark:text-slate-200">
                     Runs steps 2-9 sequentially, skipping completed steps and resuming if interrupted. Finishes by
                     opening the visualizer.
                   </div>
@@ -1891,10 +1893,10 @@ export default function SemPage() {
                         key={step.endpoint}
                         className={`border rounded px-3 py-2 text-left disabled:opacity-50 ${
                           state.status === "running"
-                            ? "border-blue-300 bg-blue-50"
+                            ? "border-blue-300 bg-blue-50 dark:border-blue-500 dark:bg-blue-900/30"
                             : state.status === "error"
-                            ? "border-red-300 bg-red-50"
-                            : "bg-white"
+                            ? "border-red-300 bg-red-50 dark:border-red-500 dark:bg-red-900/30"
+                            : "bg-white dark:border-slate-600 dark:bg-slate-800"
                         }`}
                         disabled={isBusy || !projectId}
                         onClick={() => runStep(step.endpoint, step.label)}
@@ -2000,7 +2002,7 @@ export default function SemPage() {
                 </button>
               </div>
               {campaignPreview.length > 0 && (
-                <div className="bg-gray-50 border rounded p-3 text-xs space-y-1">
+                <div className="bg-gray-50 border rounded p-3 text-xs space-y-1 dark:border-slate-700 dark:bg-slate-800">
                   <div className="font-medium text-sm">Preview (first 5 rows)</div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
@@ -2039,11 +2041,11 @@ export default function SemPage() {
                 Use the 09 Google Ads campaign CSV and initial user inputs (00) to ask OpenAI for a full campaign plan.
                 This call can take up to 3 minutes; a timer will run while waiting.
               </p>
-              <div className="flex flex-wrap items-center gap-3">
-                <button
-                  className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
-                  disabled={isBusy || !projectId}
-                  onClick={handleGenerateCampaignPlan}
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
+                disabled={isBusy || !projectId}
+                onClick={handleGenerateCampaignPlan}
                 >
                   {isStep8Running ? "Working..." : "Generate campaign plan"}
                 </button>
@@ -2054,13 +2056,13 @@ export default function SemPage() {
                 )}
               </div>
               {isStep8Running && (
-                <div className="inline-flex items-center gap-2 text-sm bg-blue-50 border border-blue-200 rounded px-3 py-2">
+                <div className="inline-flex items-center gap-2 text-sm bg-blue-50 border border-blue-200 rounded px-3 py-2 dark:border-blue-900/60 dark:bg-blue-900/30">
                   <span>Waiting for OpenAI</span>
                   <span className="font-mono">{formatElapsed(step8Elapsed)}</span>
                 </div>
               )}
               {campaignPlanResult && !isStep8Running && (
-                <div className="bg-gray-50 border rounded p-3 text-xs whitespace-pre-wrap">
+                <div className="bg-gray-50 border rounded p-3 text-xs whitespace-pre-wrap dark:border-slate-700 dark:bg-slate-800">
                   <div className="font-medium text-sm mb-1">Latest plan tree</div>
                   {buildCampaignTreeLog(campaignPlanResult.campaigns)}
                 </div>
@@ -2086,7 +2088,7 @@ export default function SemPage() {
                   Open visualization
                   <span aria-hidden>↗</span>
                 </a>
-                <span className="text-sm text-gray-700">
+                <span className="text-sm text-gray-700 dark:text-slate-200">
                   Current project: {projectId || "Set a projectId above"} (uses files starting with 10-)
                 </span>
               </div>
@@ -2095,7 +2097,7 @@ export default function SemPage() {
                 Google Ads/Editor.
               </div>
               {availableFiles.some((file) => file.startsWith("10-") || file.startsWith("11-")) && (
-                <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2">
+                <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2 dark:border-green-900/40 dark:bg-green-900/20 dark:text-green-200">
                   Found{" "}
                   {availableFiles.filter((file) => file.startsWith("10-") || file.startsWith("11-")).length} file(s)
                   starting with 10-/11- for this project.
@@ -2105,10 +2107,10 @@ export default function SemPage() {
           </div>
 
           <div className="flex-1 min-w-0 flex flex-col gap-4 md:h-[80vh] md:basis-1/2">
-            <section className="space-y-3 border rounded-lg p-4 flex-1 md:flex-[2] bg-white">
+            <section className="space-y-3 border rounded-lg p-4 flex-1 md:flex-[2] bg-white dark:border-slate-700 dark:bg-slate-900">
               <h2 className="text-xl font-medium">Logs</h2>
               {isStep1Running && (
-                <div className="space-y-1 bg-blue-50 border border-blue-200 rounded p-2 text-sm">
+                <div className="space-y-1 bg-blue-50 border border-blue-200 rounded p-2 text-sm dark:border-blue-900/60 dark:bg-blue-900/30">
                   <div className="flex items-center justify-between">
                     <span>Step 1 is running (usually takes up to 3 mins)</span>
                     <span className="font-mono">{formatElapsed(step1Elapsed)}</span>
@@ -2116,7 +2118,7 @@ export default function SemPage() {
                 </div>
               )}
               {isStep8Running && (
-                <div className="space-y-1 bg-blue-50 border border-blue-200 rounded p-2 text-sm">
+                <div className="space-y-1 bg-blue-50 border border-blue-200 rounded p-2 text-sm dark:border-blue-900/60 dark:bg-blue-900/30">
                   <div className="flex items-center justify-between">
                     <span>Step 8 is running (OpenAI campaign plan)</span>
                     <span className="font-mono">{formatElapsed(step8Elapsed)}</span>
@@ -2137,7 +2139,7 @@ export default function SemPage() {
                   </div>
                 </div>
               )}
-              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 h-64 md:max-h-[60vh] overflow-y-auto text-sm space-y-1">
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 h-64 md:max-h-[60vh] overflow-y-auto text-sm space-y-1 dark:border-slate-700 dark:bg-slate-800">
                 {logs.length === 0 && <div>No logs yet.</div>}
                 {logs.map((log, idx) => (
                   <div key={idx} className="whitespace-pre-wrap break-words">
@@ -2147,7 +2149,7 @@ export default function SemPage() {
               </div>
             </section>
 
-            <section className="space-y-3 border rounded-lg p-4 md:flex-1">
+            <section className="space-y-3 border rounded-lg p-4 md:flex-1 dark:border-slate-700 dark:bg-slate-900 bg-white">
               <h2 className="text-xl font-medium">Step Status</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
                 {([
@@ -2193,16 +2195,16 @@ export default function SemPage() {
               </div>
             </section>
 
-            <section className="space-y-3 border rounded-lg p-4 md:flex-1">
+            <section className="space-y-3 border rounded-lg p-4 md:flex-1 bg-white dark:border-slate-700 dark:bg-slate-900">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <h2 className="text-xl font-medium">Output Files</h2>
-                  <div className="text-sm text-gray-600">
+                  <div className="text-sm text-gray-600 dark:text-slate-300">
                     View, download, or edit files saved in <code className="font-mono">output/{projectId || "projectId"}</code>.
                   </div>
                 </div>
                 <button
-                  className="border rounded px-3 py-2 bg-white hover:bg-blue-50 text-sm disabled:opacity-50"
+                  className="border rounded px-3 py-2 bg-white hover:bg-blue-50 text-sm disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
                   onClick={() => projectId && refreshProjectFiles(projectId)}
                   disabled={!projectId || isFetchingFiles}
                 >
@@ -2210,11 +2212,11 @@ export default function SemPage() {
                 </button>
               </div>
               <div className="flex flex-wrap items-center gap-3 text-sm">
-                <span className="text-gray-700">
+                <span className="text-gray-700 dark:text-slate-200">
                   {projectId ? `Project ${projectId}` : "Set a projectId above to load files."}
                 </span>
                 {!fileListError && availableFiles.length > 0 && (
-                  <span className="text-gray-600">
+                  <span className="text-gray-600 dark:text-slate-300">
                     Showing {filteredFiles.length} of {availableFiles.length} file(s)
                   </span>
                 )}
@@ -2224,7 +2226,7 @@ export default function SemPage() {
                 <label className="flex items-center gap-2">
                   <span>Search</span>
                   <input
-                    className="border rounded px-2 py-1 w-48"
+                    className="border rounded px-2 py-1 w-48 dark:border-slate-600 dark:bg-slate-800"
                     placeholder="Filter files"
                     value={fileFilter}
                     onChange={(e) => setFileFilter(e.target.value)}
@@ -2234,7 +2236,7 @@ export default function SemPage() {
                 <label className="flex items-center gap-2">
                   <span>Type</span>
                   <select
-                    className="border rounded px-2 py-1"
+                    className="border rounded px-2 py-1 dark:border-slate-600 dark:bg-slate-800"
                     value={fileTypeFilter}
                     onChange={(e) => setFileTypeFilter(e.target.value as "json" | "csv" | "any")}
                     disabled={!projectId}
@@ -2258,13 +2260,13 @@ export default function SemPage() {
               <div className="flex flex-wrap items-center gap-3 text-sm">
                 <button
                   type="button"
-                  className="border rounded px-3 py-2 bg-white hover:bg-blue-50 disabled:opacity-50"
+                  className="border rounded px-3 py-2 bg-white hover:bg-blue-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
                   disabled={selectedDownloadCount === 0 || isDownloadingFiles || !projectId}
                   onClick={() => void downloadSelectedFiles()}
                 >
                   {isDownloadingFiles ? "Downloading..." : `Download selected (${selectedDownloadCount})`}
                 </button>
-                <div className="text-gray-600">
+                <div className="text-gray-600 dark:text-slate-300">
                   Click a card or its checkbox to select. Hover the number to see the full filename.
                 </div>
               </div>
@@ -2273,8 +2275,10 @@ export default function SemPage() {
                   const isSelected = selectedFilesForDownload.has(file);
                   const shortLabel = getShortFileLabel(file);
                   const baseClasses =
-                    "border rounded px-3 py-2 flex items-start justify-between gap-3 bg-white hover:bg-blue-50 transition-colors cursor-pointer";
-                  const selectedClasses = isSelected ? "border-blue-400 ring-1 ring-blue-200 bg-blue-50" : "";
+                    "border rounded px-3 py-2 flex items-start justify-between gap-3 bg-white hover:bg-blue-50 transition-colors cursor-pointer dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700";
+                  const selectedClasses = isSelected
+                    ? "border-blue-400 ring-1 ring-blue-200 bg-blue-50 dark:border-blue-400 dark:ring-blue-500/40 dark:bg-blue-900/30"
+                    : "";
                   return (
                     <div
                       key={file}
@@ -2306,7 +2310,7 @@ export default function SemPage() {
                                 {file}
                               </span>
                             </span>
-                            <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-700">
+                            <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-700 dark:bg-slate-700 dark:text-slate-100">
                               {getFileTypeLabel(file)}
                             </span>
                           </div>
@@ -2315,7 +2319,7 @@ export default function SemPage() {
                       <div className="flex items-center gap-2 shrink-0">
                         <button
                           type="button"
-                          className="border rounded p-1 bg-white hover:bg-blue-100"
+                          className="border rounded p-1 bg-white hover:bg-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700"
                           onClick={(e) => {
                             e.stopPropagation();
                             openFile(file);
@@ -2327,7 +2331,7 @@ export default function SemPage() {
                         </button>
                         <button
                           type="button"
-                          className="border rounded p-1 bg-white hover:bg-blue-100"
+                          className="border rounded p-1 bg-white hover:bg-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700"
                           onClick={(e) => {
                             e.stopPropagation();
                             void downloadFile(file);
@@ -2356,59 +2360,63 @@ export default function SemPage() {
       {selectedFile && (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/50 p-4" onClick={closeFileViewer}>
           <div
-            className="bg-white w-full max-w-4xl rounded shadow-lg overflow-hidden"
+            className="bg-white w-full max-w-4xl rounded shadow-lg overflow-hidden dark:bg-slate-900"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b px-4 py-3">
+            <div className="flex items-center justify-between border-b px-4 py-3 dark:border-slate-700">
               <div className="min-w-0">
                 <div className="text-lg font-medium">File viewer & editor</div>
-                <div className="flex items-center gap-2 text-sm text-gray-600 truncate">
+                <div className="flex items-center gap-2 text-sm text-gray-600 truncate dark:text-slate-300">
                   <span className="truncate">{selectedFile}</span>
-                  {fileContentMeta?.isJson && <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-800">JSON</span>}
+                  {fileContentMeta?.isJson && (
+                    <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-200">
+                      JSON
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  className="border rounded px-3 py-2 text-sm bg-white hover:bg-blue-50"
+                  className="border rounded px-3 py-2 text-sm bg-white hover:bg-blue-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
                   onClick={() => void downloadFile(selectedFile)}
                 >
                   Download
                 </button>
-                <button className="border rounded px-3 py-2" onClick={closeFileViewer}>
+                <button className="border rounded px-3 py-2 dark:border-slate-600" onClick={closeFileViewer}>
                   Close
                 </button>
               </div>
             </div>
-            <div className="p-4 bg-gray-50 max-h-[70vh] overflow-y-auto space-y-3">
-              {isLoadingFileContent && <div className="text-sm text-gray-600">Loading...</div>}
+            <div className="p-4 bg-gray-50 max-h-[70vh] overflow-y-auto space-y-3 dark:bg-slate-800">
+              {isLoadingFileContent && <div className="text-sm text-gray-600 dark:text-slate-300">Loading...</div>}
               {!isLoadingFileContent && (
                 <>
                   {fileViewerError && <div className="text-sm text-red-600">{fileViewerError}</div>}
-                  {fileViewerMessage && <div className="text-sm text-green-700">{fileViewerMessage}</div>}
+                  {fileViewerMessage && <div className="text-sm text-green-700 dark:text-green-200">{fileViewerMessage}</div>}
                   <div className="flex items-center gap-2">
                     {fileContentMeta?.isJson && (
                       <button
                         type="button"
-                        className="border rounded px-3 py-2 text-sm bg-white hover:bg-blue-50 disabled:opacity-50"
+                        className="border rounded px-3 py-2 text-sm bg-white hover:bg-blue-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
                         onClick={formatJsonContent}
                         disabled={isSavingFileContent}
                       >
                         Format JSON
                       </button>
                     )}
-                    <div className="text-xs text-gray-600">
+                    <div className="text-xs text-gray-600 dark:text-slate-300">
                       Edit the text below and hit save to write directly to the output folder.
                     </div>
                   </div>
                   <textarea
                     value={selectedFileContent}
                     onChange={(e) => setSelectedFileContent(e.target.value)}
-                    className="w-full h-96 border rounded px-3 py-2 text-sm font-mono bg-white"
+                    className="w-full h-96 border rounded px-3 py-2 text-sm font-mono bg-white dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                     spellCheck={false}
                   />
                   <div className="flex items-center justify-end gap-2">
                     <button
-                      className="border rounded px-3 py-2 bg-white hover:bg-gray-100"
+                      className="border rounded px-3 py-2 bg-white hover:bg-gray-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
                       onClick={closeFileViewer}
                       type="button"
                     >
@@ -2431,15 +2439,15 @@ export default function SemPage() {
       {confirmDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => handleConfirmResponse(false)}>
           <div
-            className="bg-white w-full max-w-md rounded shadow-lg overflow-hidden"
+            className="bg-white w-full max-w-md rounded shadow-lg overflow-hidden dark:bg-slate-900"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="border-b px-4 py-3">
+            <div className="border-b px-4 py-3 dark:border-slate-700">
               <div className="text-lg font-medium">{confirmDialog.title}</div>
             </div>
-            <div className="px-4 py-3 text-sm text-gray-700">{confirmDialog.message}</div>
-            <div className="flex justify-end gap-3 px-4 py-3 border-t">
-              <button className="border rounded px-4 py-2" onClick={() => handleConfirmResponse(false)}>
+            <div className="px-4 py-3 text-sm text-gray-700 dark:text-slate-200">{confirmDialog.message}</div>
+            <div className="flex justify-end gap-3 px-4 py-3 border-t dark:border-slate-700">
+              <button className="border rounded px-4 py-2 dark:border-slate-600" onClick={() => handleConfirmResponse(false)}>
                 {confirmDialog.cancelLabel || "Cancel"}
               </button>
               <button className="bg-blue-600 text-white rounded px-4 py-2" onClick={() => handleConfirmResponse(true)}>

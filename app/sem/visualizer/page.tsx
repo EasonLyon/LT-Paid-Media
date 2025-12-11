@@ -983,27 +983,27 @@ function CampaignVisualizerPageContent() {
   };
 
   return (
-    <main className="min-h-screen bg-gray-50 p-6">
+    <main className="min-h-screen bg-gray-50 p-6 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <div className="max-w-6xl mx-auto space-y-6">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm text-gray-600">Step 9</p>
-            <h1 className="text-2xl font-semibold">Campaign Visualization & QA</h1>
+            <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Campaign Visualization & QA</h1>
             <p className="text-sm text-gray-600">
               Reads Step 10 JSON, creates an automatic backup, and lets you review & edit before Google Ads upload.
             </p>
           </div>
-          <Link className="text-blue-600 underline text-sm" href="/sem">
+          <Link className="text-blue-600 underline text-sm dark:text-blue-300" href="/sem">
             ← Back to SEM pipeline
           </Link>
         </header>
 
-        <section className="bg-white border rounded-lg p-4 space-y-3">
+        <section className="bg-white border rounded-lg p-4 space-y-3 dark:border-slate-700 dark:bg-slate-900">
           <div className="flex flex-wrap items-center gap-3">
             <label className="text-sm flex items-center gap-2">
-              <span className="text-gray-700">projectId</span>
+              <span className="text-gray-700 dark:text-slate-200">projectId</span>
               <input
-                className="border rounded px-3 py-2 text-sm w-60"
+                className="border rounded px-3 py-2 text-sm w-60 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                 value={projectIdInput}
                 onChange={(e) => setProjectIdInput(e.target.value)}
                 placeholder="YYYYMMDD-HH-001"
@@ -1017,51 +1017,59 @@ function CampaignVisualizerPageContent() {
               {isLoading ? "Loading…" : "Load JSON"}
             </button>
             <button
-              className="border rounded px-4 py-2 disabled:opacity-50"
+              className="border rounded px-4 py-2 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
               onClick={saveChanges}
               disabled={isSaving || !campaigns.length}
             >
               {isSaving ? "Saving…" : "Save changes"}
             </button>
             <button
-              className="border rounded px-4 py-2 disabled:opacity-50"
+              className="border rounded px-4 py-2 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
               onClick={() => void loadPlan(projectIdInput)}
               disabled={isLoading || !projectIdInput}
             >
               Reload from disk
             </button>
           </div>
-          <div className="text-sm text-gray-700 flex flex-wrap gap-3">
-            <span className="px-2 py-1 rounded bg-blue-50 text-blue-700">
+          <div className="text-sm text-gray-700 flex flex-wrap gap-3 dark:text-slate-200">
+            <span className="px-2 py-1 rounded bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-100">
               File: {fileName ?? "waiting for load"}
             </span>
             {backupFileName && (
-              <span className="px-2 py-1 rounded bg-green-50 text-green-700">Backup: {backupFileName}</span>
+              <span className="px-2 py-1 rounded bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-200">
+                Backup: {backupFileName}
+              </span>
             )}
-            <span className="px-2 py-1 rounded bg-amber-50 text-amber-800">
+            <span className="px-2 py-1 rounded bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-100">
               Tip: double click a cell in tables view to edit. Toggle Normal/Negative in Keyword table.
             </span>
           </div>
-          {statusMessage && <div className="text-sm text-gray-800">{statusMessage}</div>}
+          {statusMessage && <div className="text-sm text-gray-800 dark:text-slate-200">{statusMessage}</div>}
           <div className="flex items-center gap-2 text-sm">
             <span className="font-medium">Views</span>
             <button
               type="button"
-              className={`px-3 py-1 rounded border ${viewMode === "performance" ? "bg-blue-600 text-white" : "bg-white"}`}
+              className={`px-3 py-1 rounded border ${
+                viewMode === "performance" ? "bg-blue-600 text-white" : "bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+              }`}
               onClick={() => setViewMode("performance")}
             >
               Performance calculator (default)
             </button>
             <button
               type="button"
-              className={`px-3 py-1 rounded border ${viewMode === "hierarchy" ? "bg-blue-600 text-white" : "bg-white"}`}
+              className={`px-3 py-1 rounded border ${
+                viewMode === "hierarchy" ? "bg-blue-600 text-white" : "bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+              }`}
               onClick={() => setViewMode("hierarchy")}
             >
               Hierarchical view
             </button>
             <button
               type="button"
-              className={`px-3 py-1 rounded border ${viewMode === "tables" ? "bg-blue-600 text-white" : "bg-white"}`}
+              className={`px-3 py-1 rounded border ${
+                viewMode === "tables" ? "bg-blue-600 text-white" : "bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+              }`}
               onClick={() => setViewMode("tables")}
             >
               Tables for QA & export
@@ -1070,30 +1078,30 @@ function CampaignVisualizerPageContent() {
         </section>
 
         {viewMode === "performance" && (
-          <section className="bg-white border rounded-lg p-4 space-y-5">
+          <section className="bg-white border rounded-lg p-4 space-y-5 dark:border-slate-700 dark:bg-slate-900">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-xl font-semibold">Performance calculator</h2>
-                <p className="text-sm text-gray-600">
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Performance calculator</h2>
+                <p className="text-sm text-gray-600 dark:text-slate-300">
                   Forecast clicks, leads, revenue, and ROI using 00-user-input and 10/11 campaign plan budgets.
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1 text-sm">
-                <span className="px-2 py-1 rounded bg-gray-100 text-gray-800">
+                <span className="px-2 py-1 rounded bg-gray-100 text-gray-800 dark:bg-slate-800 dark:text-slate-100">
                   Step 1 budget: {normalizedInput ? formatCurrency(normalizedInput.monthly_adspend_myr) : "—"}
                 </span>
-                <span className="px-2 py-1 rounded bg-blue-50 text-blue-800">
+                <span className="px-2 py-1 rounded bg-blue-50 text-blue-800 dark:bg-blue-900/30 dark:text-blue-100">
                   Campaign spend ×{assumptions.daysPerMonth}d: {formatCurrency(performanceTotals.totalMonthlySpend)}
                 </span>
               </div>
             </div>
             {!campaigns.length ? (
-              <div className="text-sm text-gray-600">
+              <div className="text-sm text-gray-600 dark:text-slate-300">
                 Load a project to pull budgets from 00/11 JSON before using the calculator.
               </div>
             ) : (
               <>
-                <div className="border rounded-lg bg-gray-50 p-4">
+                <div className="border rounded-lg bg-gray-50 p-4 dark:border-slate-700 dark:bg-slate-800">
                   <div className="flex items-center justify-between gap-2 mb-3">
                     <div className="text-sm font-semibold" title="Ad spend flowing into clicks, leads, revenue, and ROI">
                       Performance funnel
@@ -1430,15 +1438,15 @@ function CampaignVisualizerPageContent() {
         )}
 
         {viewMode === "hierarchy" && (
-          <section className="bg-white border rounded-lg p-4 space-y-4">
+          <section className="bg-white border rounded-lg p-4 space-y-4 dark:border-slate-700 dark:bg-slate-900">
             <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold">Campaign hierarchy</h2>
-              <button className="text-sm text-blue-700 underline" onClick={resetSelection}>
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Campaign hierarchy</h2>
+              <button className="text-sm text-blue-700 underline dark:text-blue-300" onClick={resetSelection}>
                 Clear ad group selection
               </button>
             </div>
             {campaigns.length === 0 && (
-              <div className="text-sm text-gray-600">Load a project to view campaign cards.</div>
+              <div className="text-sm text-gray-600 dark:text-slate-300">Load a project to view campaign cards.</div>
             )}
             <div className="grid md:grid-cols-[1.3fr_1fr] gap-4">
               <div className="space-y-3">
@@ -1448,7 +1456,7 @@ function CampaignVisualizerPageContent() {
                     <details
                       key={campaignIdx}
                       open={isOpen}
-                      className="border rounded-lg overflow-hidden bg-gray-50"
+                      className="border rounded-lg overflow-hidden bg-gray-50 dark:border-slate-700 dark:bg-slate-800"
                       onToggle={(e) =>
                         setExpandedCampaigns((prev) => ({
                           ...prev,
@@ -1458,14 +1466,16 @@ function CampaignVisualizerPageContent() {
                     >
                       <summary className="cursor-pointer px-4 py-3 flex flex-wrap gap-3 items-center">
                         <div className="flex items-center gap-2 font-semibold">
-                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white border text-xs">
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white border text-xs dark:border-slate-600 dark:bg-slate-800">
                             {isOpen ? "−" : "+"}
                           </span>
                           <span>{campaign.CampaignName ?? `Campaign ${campaignIdx + 1}`}</span>
                           <button
                             type="button"
                             className={`ml-1 text-xs px-2 py-1 border rounded flex items-center gap-1 ${
-                              copiedName === `campaign-${campaignIdx}` ? "bg-green-100 text-green-800 border-green-300" : ""
+                              copiedName === `campaign-${campaignIdx}`
+                                ? "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/30 dark:text-green-200 dark:border-green-700"
+                                : "dark:border-slate-600 dark:text-slate-100"
                             }`}
                             onClick={(e) => {
                               e.preventDefault();
@@ -1482,25 +1492,25 @@ function CampaignVisualizerPageContent() {
                             <span>{copiedName === `campaign-${campaignIdx}` ? "Copied" : "Copy"}</span>
                           </button>
                         </div>
-                        <div className="text-xs text-gray-700 flex gap-2 flex-wrap">
-                          <span className="px-2 py-1 rounded bg-white border">Goal: {campaign.Goal || "—"}</span>
-                          <span className="px-2 py-1 rounded bg-white border">
+                        <div className="text-xs text-gray-700 flex gap-2 flex-wrap dark:text-slate-200">
+                          <span className="px-2 py-1 rounded bg-white border dark:border-slate-600 dark:bg-slate-800">Goal: {campaign.Goal || "—"}</span>
+                          <span className="px-2 py-1 rounded bg-white border dark:border-slate-600 dark:bg-slate-800">
                             Type: {campaign.CampaignType || "—"}
                           </span>
-                          <span className="px-2 py-1 rounded bg-white border">
+                          <span className="px-2 py-1 rounded bg-white border dark:border-slate-600 dark:bg-slate-800">
                             Budget: {formatCurrency(campaign.BudgetDailyMYR)}
                           </span>
-                          <span className="px-2 py-1 rounded bg-white border">
+                          <span className="px-2 py-1 rounded bg-white border dark:border-slate-600 dark:bg-slate-800">
                             tCPA: {formatCurrency(campaign.TargetCPAMYR)}
                           </span>
-                          <span className="px-2 py-1 rounded bg-white border">Lang: {campaign.Language || "—"}</span>
-                          <span className="px-2 py-1 rounded bg-white border">
+                          <span className="px-2 py-1 rounded bg-white border dark:border-slate-600 dark:bg-slate-800">Lang: {campaign.Language || "—"}</span>
+                          <span className="px-2 py-1 rounded bg-white border dark:border-slate-600 dark:bg-slate-800">
                             {campaign.Location?.Name || "No location"} • {campaign.Location?.RadiusKm ?? "—"} km
                           </span>
                         </div>
                       </summary>
                       <div className="px-4 pb-4 space-y-2">
-                        <div className="text-sm text-gray-700">
+                        <div className="text-sm text-gray-700 dark:text-slate-200">
                           {campaign.AdGroups?.length ?? 0} ad group(s) • Click to drill into Ads / Keywords / Negatives
                         </div>
                         <div className="grid md:grid-cols-2 gap-2">
@@ -1517,21 +1527,21 @@ function CampaignVisualizerPageContent() {
                                   selectedAdGroup?.adGroupIdx === adGroupIdx
                                     ? "ring-2 ring-blue-400"
                                     : ""
-                                }`}
+                                } dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:border-blue-500`}
                                 onClick={() => setSelectedAdGroup({ campaignIdx, adGroupIdx })}
                               >
                                 <div className="font-medium">{group.AdGroupName ?? `Ad Group ${adGroupIdx + 1}`}</div>
-                                <div className="text-xs text-gray-600 flex flex-wrap gap-2 mt-1">
-                                  <span className="px-2 py-1 rounded bg-blue-50 text-blue-800">
+                                <div className="text-xs text-gray-600 flex flex-wrap gap-2 mt-1 dark:text-slate-300">
+                                  <span className="px-2 py-1 rounded bg-blue-50 text-blue-800 dark:bg-blue-900/30 dark:text-blue-100">
                                     CPC (MYR): {formatCpc(group.DefaultMaxCPCMYR)}
                                   </span>
-                                  <span className="px-2 py-1 rounded bg-green-50 text-green-800">
+                                  <span className="px-2 py-1 rounded bg-green-50 text-green-800 dark:bg-green-900/30 dark:text-green-200">
                                     Ads: {ads.length}
                                   </span>
-                                  <span className="px-2 py-1 rounded bg-gray-100 text-gray-800">
+                                  <span className="px-2 py-1 rounded bg-gray-100 text-gray-800 dark:bg-slate-700 dark:text-slate-100">
                                     Keywords: {keywords.length}
                                   </span>
-                                  <span className="px-2 py-1 rounded bg-amber-50 text-amber-800">
+                                  <span className="px-2 py-1 rounded bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-100">
                                     Negatives: {negatives.length}
                                   </span>
                                 </div>
@@ -1612,23 +1622,23 @@ function CampaignVisualizerPageContent() {
         )}
 
         {viewMode === "tables" && (
-          <section className="bg-white border rounded-lg p-4 space-y-4">
+          <section className="bg-white border rounded-lg p-4 space-y-4 dark:border-slate-700 dark:bg-slate-900">
             <div className="flex flex-wrap items-center gap-3">
-              <h2 className="text-xl font-semibold">QA tables & exports</h2>
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-white">QA tables & exports</h2>
               <div className="flex items-center gap-2 text-sm">
                 <label className="flex items-center gap-1">
-                  <span className="text-gray-700">Campaign filter</span>
+                  <span className="text-gray-700 dark:text-slate-200">Campaign filter</span>
                   <input
-                    className="border rounded px-2 py-1"
+                    className="border rounded px-2 py-1 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                     value={filters.campaign}
                     onChange={(e) => setFilters((prev) => ({ ...prev, campaign: e.target.value }))}
                     placeholder="Search campaign"
                   />
                 </label>
                 <label className="flex items-center gap-1">
-                  <span className="text-gray-700">Ad group filter</span>
+                  <span className="text-gray-700 dark:text-slate-200">Ad group filter</span>
                   <input
-                    className="border rounded px-2 py-1"
+                    className="border rounded px-2 py-1 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                     value={filters.adGroup}
                     onChange={(e) => setFilters((prev) => ({ ...prev, adGroup: e.target.value }))}
                     placeholder="Search ad group"
