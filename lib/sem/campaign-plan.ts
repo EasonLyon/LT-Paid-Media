@@ -48,11 +48,17 @@ export async function generateCampaignPlan(projectId: string) {
   });
 
   const normalizeCampaignName = (name: string, index: string) => {
-    const marker = "AI | ";
-    const afterMarker = name.startsWith(marker) ? name.slice(marker.length) : name.replace(/^AI \|\s*/, "");
-    const withoutIndex = afterMarker.replace(/^\d{1,2}\s*\|\s*/, "").trim();
-    const rest = withoutIndex ? ` | ${withoutIndex}` : "";
-    return `${marker}${index}${rest}`;
+    const cleaned = name.replace(/^AI\s*\|\s*/i, "").replace(/^\d{1,2}\s*\|\s*/, "");
+    const parts = cleaned.split(" | ");
+    if (parts.length > 1) {
+      if (/^\d{2}$/.test(parts[1])) {
+        parts[1] = index;
+      } else {
+        parts.splice(1, 0, index);
+      }
+      return parts.join(" | ");
+    }
+    return `${index} | ${cleaned}`;
   };
 
   const normalizeAdGroupName = (name: string, index: string) => {
