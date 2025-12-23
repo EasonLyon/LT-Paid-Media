@@ -144,7 +144,11 @@ export async function POST(req: Request) {
     await writeProjectJson(projectId, "02", "dataforseo-search-volume-raw.json", allResponses);
 
     // Always re-run enrichment on the full set to ensure consistency
-    const enriched = buildEnrichedKeywords(allResponses, { ...categoryMap, ...sanitizedCategoryMap }, projectId);
+    const enriched = buildEnrichedKeywords(
+      allResponses as import("@/types/sem").DataForSeoSearchVolumeResponse[],
+      { ...categoryMap, ...sanitizedCategoryMap },
+      projectId
+    );
     await writeProjectJson(projectId, "03", "keywords-enriched-with-search-volume.json", enriched);
     await writeProjectJson(projectId, "04", "keywords-enriched-all.json", enriched);
 

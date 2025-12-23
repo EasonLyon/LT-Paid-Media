@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { CampaignPlanPayload, NormalizedProjectInitInput } from "@/types/sem";
 
 const PROMPT_ID = "pmpt_69306275f10c8197b1310916806b42490e59ebe827e88503";
-const PROMPT_VERSION = "8";
+const PROMPT_VERSION = "9";
 
 function getOpenAIClient() {
   if (!process.env.OPENAI_API_KEY) {
@@ -53,6 +53,7 @@ export async function fetchCampaignPlan(
           language: normalizedInput.language,
           monthly_budget: normalizedInput.monthly_adspend_myr.toString(),
           keyword_data: keywordData,
+          context: normalizedInput.context ?? "",
         },
       },
     });

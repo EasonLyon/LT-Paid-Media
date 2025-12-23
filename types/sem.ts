@@ -5,6 +5,7 @@ export interface ProjectInitInput {
   state_list?: string | string[] | null;
   language?: string;
   monthly_adspend_myr?: number | string | null;
+  context?: string;
 }
 
 export interface NormalizedProjectInitInput {
@@ -14,6 +15,7 @@ export interface NormalizedProjectInitInput {
   state_list: string[] | null;
   language: string;
   monthly_adspend_myr: number;
+  context?: string;
 }
 
 export interface KeywordCategoryInfo {

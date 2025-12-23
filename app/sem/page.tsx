@@ -27,6 +27,7 @@ interface StartFormState {
   state_list: string;
   language: string;
   monthly_adspend_myr: number;
+  context: string;
 }
 
 type StepKey =
@@ -81,6 +82,7 @@ const DEFAULT_START_FORM: StartFormState = {
   state_list: "",
   language: "English",
   monthly_adspend_myr: 5000,
+  context: "",
 };
 
 function toStateListString(value: unknown): string {
@@ -122,6 +124,7 @@ function buildStartFormFromInput(
     state_list: toStateListString(stateListValue),
     language: typeof source.language === "string" && source.language ? source.language : fallback.language,
     monthly_adspend_myr: coerceAdSpend(adSpend, fallback.monthly_adspend_myr),
+    context: typeof source.context === "string" ? source.context : fallback.context,
   };
 }
 
@@ -368,6 +371,7 @@ export default function SemPage() {
         state_list: startForm.state_list || undefined,
         language: startForm.language,
         monthly_adspend_myr: startForm.monthly_adspend_myr,
+        context: startForm.context || undefined,
       };
       const res = await callApi<{ projectId: string }>("start", payload);
       setProjectId(res.projectId);
@@ -1818,6 +1822,15 @@ export default function SemPage() {
                     )}
                   </label>
                 </div>
+                <label className="grid gap-1">
+                  <span>Context (optional extra info for business)</span>
+                  <textarea
+                    className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 min-h-[100px]"
+                    value={startForm.context}
+                    onChange={(e) => setStartForm((prev) => ({ ...prev, context: e.target.value }))}
+                    placeholder="Enter more context about the business, target audience, specific products to focus on, etc."
+                  />
+                </label>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <span>Monthly ad spend (MYR)</span>

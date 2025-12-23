@@ -44,6 +44,7 @@ export function normalizeProjectInitInput(input: ProjectInitInput): NormalizedPr
     state_list: normalizeStateList(input.state_list),
     language: (input.language ?? "English").trim() || "English",
     monthly_adspend_myr: normalizeAdSpend(input.monthly_adspend_myr),
+    context: input.context?.trim() || undefined,
   };
 }
 

@@ -43,13 +43,14 @@ export async function fetchInitialKeywordClusters(
     response = await client.responses.create({
       prompt: {
         id: promptId,
-        version: "4",
+        version: "5",
         variables: {
           website: normalizedInput.website,
           goal: normalizedInput.goal ?? "Lead",
           location: normalizedInput.location ?? "Malaysia",
           state_list: normalizedInput.state_list ? normalizedInput.state_list.join(", ") : "",
           language_list: normalizedInput.language ?? "English",
+          context: normalizedInput.context ?? "",
         },
       },
     });
