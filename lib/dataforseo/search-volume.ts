@@ -20,12 +20,13 @@ interface SearchVolumeOptions {
     processedKeywords: number;
     totalKeywords: number;
   }) => void | Promise<void>;
+  timeoutAt?: number;
 }
 
 export async function fetchSearchVolumeBatches(
   keywords: string[],
   options: SearchVolumeOptions = {},
-): Promise<{ responses: DataForSeoSearchVolumeResponse[]; skipped: string[] }> {
+): Promise<{ responses: DataForSeoSearchVolumeResponse[]; skipped: string[]; incomplete?: boolean }> {
   const RATE_LIMIT_STATUS_CODE = 40202;
   const MAX_RATE_LIMIT_RETRIES = 8;
   const BASE_RATE_LIMIT_DELAY_MS = 70_000;
@@ -35,6 +36,7 @@ export async function fetchSearchVolumeBatches(
   const location_code = options.location_code ?? 2458;
   const requestDelayMs = options.requestDelayMs ?? 6_500;
   const onProgress = options.onProgress;
+  const timeoutAt = options.timeoutAt;
 
   console.log("[search-volume] validating keywords");
   const skippedSet = new Set<string>();
@@ -59,6 +61,7 @@ export async function fetchSearchVolumeBatches(
   let totalKeywords = sanitizedKeywords.length;
   let completedBatches = 0;
   let processedKeywords = 0;
+  let incomplete = false;
 
   await onProgress?.({ completedBatches, totalBatches, processedKeywords, totalKeywords });
 
@@ -79,6 +82,12 @@ export async function fetchSearchVolumeBatches(
   };
 
   for (const batch of tqdm(batches, { description: "DataForSEO search_volume" })) {
+    if (timeoutAt && Date.now() > timeoutAt) {
+      console.warn(`[search-volume] timeout reached (${timeoutAt}), pausing batch processing.`);
+      incomplete = true;
+      break;
+    }
+
     let currentBatch = [...batch];
 
     if (currentBatch.length === 0) {
@@ -141,8 +150,8 @@ export async function fetchSearchVolumeBatches(
     }
   }
 
-  console.log("[search-volume] complete");
-  return { responses, skipped: Array.from(skippedSet) };
+  console.log(`[search-volume] complete (incomplete=${incomplete})`);
+  return { responses, skipped: Array.from(skippedSet), incomplete };
 }
 
 async function postWithRateLimitRetry<T>(

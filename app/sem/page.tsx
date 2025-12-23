@@ -811,11 +811,21 @@ export default function SemPage() {
     push(`Running ${label} for ${projectId}`);
     let succeeded = false;
     try {
-      const res = await callApi(endpoint, { projectId, force });
-      push(`${label} success: ${JSON.stringify(res)}`);
-      updateStepStatus(mapEndpointToKey(endpoint), { status: "success", message: `${label} success` });
-      succeeded = true;
-      refreshProjectFiles(projectId);
+      let keepGoing = true;
+      while (keepGoing) {
+        const res = await callApi<{ incomplete?: boolean } & StepResponse>(endpoint, { projectId, force });
+        if (res.incomplete) {
+          push(`${label}: Time limit reached, auto-resuming...`);
+          // For subsequent calls, we must NOT force restart; we want to resume.
+          force = false; 
+        } else {
+          push(`${label} success: ${JSON.stringify(res)}`);
+          updateStepStatus(mapEndpointToKey(endpoint), { status: "success", message: `${label} success` });
+          succeeded = true;
+          refreshProjectFiles(projectId);
+          keepGoing = false;
+        }
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
       push(`${label} failed: ${message}`);

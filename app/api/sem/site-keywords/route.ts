@@ -9,12 +9,19 @@ import {
 } from "@/lib/storage/project-files";
 import { SerpExpansionResult, SiteKeywordRecord } from "@/types/sem";
 
+export const maxDuration = 300; // 5 minutes
+
 export async function POST(req: Request) {
   let currentProjectId: string | null = null;
   let startTimestamp = Date.now();
   let totalTargets = 0;
   let completed = 0;
   let lastTarget: string | null = null;
+  // Stop processing new items if we pass this duration to avoid 504.
+  // 5m = 300s. Let's stop at 240s (4m) to be safe for writes/overhead.
+  const TIMEOUT_THRESHOLD_MS = 240_000;
+  let timeLimitReached = false;
+
   try {
     console.log("[Step4] start");
     const { projectId, force } = (await req.json()) as { projectId?: string; force?: boolean };
@@ -70,6 +77,7 @@ export async function POST(req: Request) {
       status: "running" | "done" | "error" = "running",
       errorMessage?: string,
     ) => {
+      // If we are just pausing for timeout, don't mark as "done", keep "running".
       const elapsed = Date.now() - startTimestamp;
       const nextPollMs = elapsed < 10000 ? 1000 : 4000;
       await writeProjectProgress(projectId, "step4-progress.json", {
@@ -100,8 +108,23 @@ export async function POST(req: Request) {
       recordMap.set(rec.keyword.trim().toLowerCase(), rec);
     }
 
+    const runStart = Date.now();
+
     await runWithConcurrency(targetsToProcess, concurrency, async (targetUrl) => {
+      if (Date.now() - runStart > TIMEOUT_THRESHOLD_MS) {
+        timeLimitReached = true;
+        return; // skip remaining
+      }
+      if (timeLimitReached) return;
+
       await limiter();
+      
+      // Double check after await
+      if (Date.now() - runStart > TIMEOUT_THRESHOLD_MS) {
+        timeLimitReached = true;
+        return;
+      }
+
       lastTarget = targetUrl;
       let responses: unknown[] = [];
       try {
@@ -136,11 +159,26 @@ export async function POST(req: Request) {
       await writeProjectJson(projectId, "06", "site-keywords-from-top-domains.json", Array.from(recordMap.values()));
     });
 
+    const finalRecords = Array.from(recordMap.values());
+    const filePath = await writeProjectJson(projectId, "06", "site-keywords-from-top-domains.json", finalRecords);
+
+    if (timeLimitReached && done < urls.length) {
+      console.log(`[Step4] time limit reached (${TIMEOUT_THRESHOLD_MS}ms). Pausing at ${done}/${urls.length}.`);
+      await writeProg(done, null, false, "running"); // Keep running status so UI can resume
+      return NextResponse.json({
+        incomplete: true,
+        urls: urls.length,
+        processed: done - startIndex,
+        records: finalRecords.length,
+        filePath,
+        resumedFrom: startIndex,
+        message: "Time limit reached, resuming automatically...",
+      });
+    }
+
     await writeProg(urls.length, null, true, "done");
     progress.update(urls.length, true);
 
-    const finalRecords = Array.from(recordMap.values());
-    const filePath = await writeProjectJson(projectId, "06", "site-keywords-from-top-domains.json", finalRecords);
     console.log("[Step4] complete");
     return NextResponse.json({
       urls: urls.length,

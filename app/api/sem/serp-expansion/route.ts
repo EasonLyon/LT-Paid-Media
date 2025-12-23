@@ -17,6 +17,8 @@ import {
 import { flattenKeywordsWithCategories } from "@/lib/sem/keywords";
 import { ensureDataForSeoResponseOk } from "@/lib/dataforseo/validate";
 
+export const maxDuration = 300;
+
 interface SeedSelection {
   category: string;
   selected: string[];
@@ -27,6 +29,10 @@ interface SeedSelection {
 type Step3HistoryEntry = { target: string; timestamp: string; completed: number; status: "completed" | "failed"; error?: string };
 
 export async function POST(req: Request) {
+  const runStart = Date.now();
+  const TIMEOUT_THRESHOLD_MS = 240_000;
+  let timeLimitReached = false;
+
   try {
     console.log("[Step3] start");
     const { projectId, force } = (await req.json()) as { projectId?: string; force?: boolean };
@@ -88,7 +94,7 @@ export async function POST(req: Request) {
       )) ?? { new_keywords: [], top_organic_urls: [] };
 
     let done = startIndex;
-    const writeProg = async (completed: number, keyword: string | null, final = false) => {
+    const writeProg = async (completed: number, keyword: string | null, final = false, status: "running" | "done" | "error" = "running") => {
       const elapsed = Date.now() - startTimestamp;
       const nextPollMs = elapsed < 10000 ? 1000 : 4000;
       await writeProjectProgress(projectId, "step3-progress.json", {
@@ -97,6 +103,7 @@ export async function POST(req: Request) {
         completed,
         total: seedKeywords.length,
         percent: seedKeywords.length === 0 ? 0 : Math.round((completed / seedKeywords.length) * 100),
+        status, // pass status through
         timestamp: new Date().toISOString(),
         startTimestamp,
         nextPollMs: final ? 0 : nextPollMs,
@@ -118,9 +125,20 @@ export async function POST(req: Request) {
 
     const processSeed = async () => {
       while (idx < seedsToProcess.length) {
+        if (Date.now() - runStart > TIMEOUT_THRESHOLD_MS) {
+          timeLimitReached = true;
+          return;
+        }
+
         const current = idx++;
         const keyword = seedsToProcess[current];
         await limiter();
+
+        if (Date.now() - runStart > TIMEOUT_THRESHOLD_MS) {
+          timeLimitReached = true;
+          return;
+        }
+
         const tasks = [
           {
             keyword,
@@ -169,7 +187,27 @@ export async function POST(req: Request) {
     const workers = Array.from({ length: Math.min(concurrency, seedsToProcess.length || 1) }, () => processSeed());
     await Promise.all(workers);
 
-    await writeProg(seedKeywords.length, null, true);
+    if (timeLimitReached && done < seedKeywords.length) {
+      console.log(`[Step3] time limit reached (${TIMEOUT_THRESHOLD_MS}ms). Pausing at ${done}/${seedKeywords.length}.`);
+      await writeProg(done, null, false, "running");
+      const filePath = await writeProjectJson(projectId, "05", "serp-new-keywords-and-top-urls.json", {
+        new_keywords: Array.from(newKeywordSet),
+        top_organic_urls: mergedTopUrls,
+      });
+      return NextResponse.json({
+        incomplete: true,
+        seeds: seedKeywords.length,
+        processed: done - startIndex,
+        newKeywords: newKeywordSet.size,
+        topUrls: mergedTopUrls.length,
+        filePath,
+        resumedFrom: startIndex,
+        seedFilePath,
+        message: "Time limit reached, resuming automatically...",
+      });
+    }
+
+    await writeProg(seedKeywords.length, null, true, "done");
 
     const filePath = await writeProjectJson(projectId, "05", "serp-new-keywords-and-top-urls.json", {
       new_keywords: Array.from(newKeywordSet),
