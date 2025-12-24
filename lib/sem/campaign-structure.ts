@@ -1,4 +1,4 @@
-import { CampaignStructureRow, ScoredKeywordRecord, Tier } from "@/types/sem";
+import { CampaignStructureRow, CampaignStructureStats, ScoredKeywordRecord, Tier } from "@/types/sem";
 import { projectFilePath, readProjectJson, writeProjectText } from "../storage/project-files";
 
 const OUTPUT_FILE = "09-google-ads-campaign-structure.csv";
@@ -55,6 +55,35 @@ function buildRows(records: ScoredKeywordRecord[], options: BuildCampaignStructu
     });
 }
 
+function calculateStats(rows: CampaignStructureRow[]): CampaignStructureStats {
+  const tierCounts: Record<string, number> = { A: 0, B: 0, C: 0 };
+  let totalSearchVolume = 0;
+  let totalCpc = 0;
+  let searchVolumeCount = 0;
+  let cpcCount = 0;
+
+  for (const row of rows) {
+    if (row.tier) {
+      tierCounts[row.tier] = (tierCounts[row.tier] || 0) + 1;
+    }
+    if (typeof row.avg_monthly_searches === "number" && Number.isFinite(row.avg_monthly_searches)) {
+      totalSearchVolume += row.avg_monthly_searches;
+      searchVolumeCount++;
+    }
+    if (typeof row.cpc === "number" && Number.isFinite(row.cpc)) {
+      totalCpc += row.cpc;
+      cpcCount++;
+    }
+  }
+
+  return {
+    totalKeywords: rows.length,
+    tierCounts,
+    avgSearchVolume: searchVolumeCount > 0 ? totalSearchVolume / searchVolumeCount : null,
+    avgCpc: cpcCount > 0 ? totalCpc / cpcCount : null,
+  };
+}
+
 function rowsToCsv(rows: CampaignStructureRow[]): string {
   const headers = ["keyword", "avg_monthly_searches", "cpc"];
   const lines = [
@@ -84,6 +113,7 @@ export async function buildCampaignStructure(projectId: string, options: BuildCa
   }
   const rows = buildRows(scoredRecords, options);
   const csv = rowsToCsv(rows);
+  const stats = calculateStats(rows);
 
   const filePath = await writeProjectText(projectId, OUTPUT_FILE, csv, "text/csv; charset=utf-8");
 
@@ -94,5 +124,6 @@ export async function buildCampaignStructure(projectId: string, options: BuildCa
     fileName: OUTPUT_FILE,
     filePath: projectFilePath(projectId, OUTPUT_FILE),
     totalRows: rows.length,
+    stats,
   };
 }

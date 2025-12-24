@@ -69,6 +69,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       totalRows: result.totalRows,
       previewRows: result.previewRows satisfies CampaignStructureRow[],
+      stats: result.stats,
       fileName: result.fileName,
     });
   } catch (error: unknown) {

@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CampaignPlan, CampaignStructureRow, NormalizedProjectInitInput, ProjectInitInput, Tier } from "@/types/sem";
+import { CampaignPlan, CampaignStructureRow, CampaignStructureStats, NormalizedProjectInitInput, ProjectInitInput, Tier } from "@/types/sem";
 
 type StepResponse = Record<string, unknown>;
 
@@ -300,6 +300,7 @@ export default function SemPage() {
     seoFlags: { true: false, false: false },
   });
   const [campaignPreview, setCampaignPreview] = useState<CampaignStructureRow[]>([]);
+  const [campaignStats, setCampaignStats] = useState<CampaignStructureStats | null>(null);
   const [campaignCsvName, setCampaignCsvName] = useState<string | null>(null);
   const [campaignFiltersApplied, setCampaignFiltersApplied] = useState<AppliedCampaignFilters | null>(null);
   const [campaignPlanResult, setCampaignPlanResult] = useState<{
@@ -1458,6 +1459,7 @@ export default function SemPage() {
       const json = (await res.json()) as {
         totalRows?: number;
         previewRows?: CampaignStructureRow[];
+        stats?: CampaignStructureStats;
         fileName?: string;
         error?: string;
       };
@@ -1466,6 +1468,7 @@ export default function SemPage() {
       }
       const previewRows = Array.isArray(json.previewRows) ? json.previewRows : [];
       setCampaignPreview(previewRows);
+      setCampaignStats(json.stats ?? null);
       setCampaignCsvName(typeof json.fileName === "string" ? json.fileName : "09-google-ads-campaign-structure.csv");
       setCampaignFiltersApplied(filters);
       const totalRows = typeof json.totalRows === "number" ? json.totalRows : previewRows.length;
@@ -2019,18 +2022,48 @@ export default function SemPage() {
                   onClick={handleCampaignStructure}
                 >
                   {isBusy ? "Working..." : "Generate campaign CSV"}
-                </button>
-                <button
-                  className="border rounded px-4 py-2 disabled:opacity-50"
-                  disabled={!projectId}
-                  onClick={handleDownloadCampaignCsv}
-                >
-                  Download CSV
-                </button>
-              </div>
-              {campaignPreview.length > 0 && (
-                <div className="bg-gray-50 border rounded p-3 text-xs space-y-1 dark:border-slate-700 dark:bg-slate-800">
-                  <div className="font-medium text-sm">Preview (first 5 rows)</div>
+                                  </button>
+                                  <button
+                                    onClick={handleDownloadCampaignCsv}
+                                    className="border rounded px-4 py-2 hover:bg-gray-50 dark:border-slate-600 dark:hover:bg-slate-800"
+                                    disabled={!projectId}
+                                  >
+                                                        Download CSV
+                                                      </button>
+                                                    </div>
+                                    
+                                                  {campaignStats && (                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-gray-50 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700">
+                                  <div>
+                                    <div className="text-gray-500 uppercase text-xs font-semibold">Total Keywords</div>
+                                    <div className="text-lg font-medium">{campaignStats.totalKeywords}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-gray-500 uppercase text-xs font-semibold">Tier Breakdown</div>
+                                    <div className="space-x-2">
+                                      <span className="text-green-700 dark:text-green-400">A: {campaignStats.tierCounts.A || 0}</span>
+                                      <span className="text-blue-700 dark:text-blue-400">B: {campaignStats.tierCounts.B || 0}</span>
+                                      <span className="text-amber-700 dark:text-amber-400">C: {campaignStats.tierCounts.C || 0}</span>
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <div className="text-gray-500 uppercase text-xs font-semibold">Avg Search Vol</div>
+                                    <div className="text-lg font-medium">
+                                      {campaignStats.avgSearchVolume
+                                        ? Math.round(campaignStats.avgSearchVolume).toLocaleString()
+                                        : "—"}
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <div className="text-gray-500 uppercase text-xs font-semibold">Avg CPC (MYR)</div>
+                                    <div className="text-lg font-medium">
+                                      {campaignStats.avgCpc ? campaignStats.avgCpc.toFixed(2) : "—"}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                
+                              {campaignPreview.length > 0 && (
+                                <div className="space-y-2">                  <div className="font-medium text-sm">Preview (first 5 rows)</div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
                       <thead>

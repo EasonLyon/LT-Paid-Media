@@ -130,6 +130,13 @@ export interface CampaignStructureRow {
   ads_score: number | null;
 }
 
+export interface CampaignStructureStats {
+  totalKeywords: number;
+  tierCounts: Record<string, number>;
+  avgSearchVolume: number | null;
+  avgCpc: number | null;
+}
+
 export interface TopOrganicUrl {
   rank_group: number;
   title: string;
