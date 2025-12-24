@@ -327,6 +327,7 @@ function CampaignVisualizerPageContent() {
   const [salesValueAutoSet, setSalesValueAutoSet] = useState(false);
   const [monthlySpendInput, setMonthlySpendInput] = useState<string>("");
   const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const [websiteUrl, setWebsiteUrl] = useState<string | null>(null);
 
   const sortedCampaignsByBudget = useMemo(
     () =>
@@ -825,6 +826,7 @@ function CampaignVisualizerPageContent() {
       setFileName(json.fileName ?? null);
       setBackupFileName(json.backupFileName ?? null);
       setNormalizedInput(json.normalizedInput ?? null);
+      setWebsiteUrl(json.normalizedInput?.website ?? null);
       setSalesValueAutoSet(false);
       setMonthlySpendOverride(null);
       setStatusMessage(
@@ -997,6 +999,23 @@ function CampaignVisualizerPageContent() {
             ← Back to SEM pipeline
           </Link>
         </header>
+
+        {websiteUrl && (
+          <div className="bg-white border rounded-lg p-3 flex items-center justify-between dark:border-slate-700 dark:bg-slate-900">
+            <div className="flex flex-col">
+              <span className="text-xs text-gray-500 uppercase font-medium">Website Context</span>
+              <span className="font-semibold text-slate-900 dark:text-slate-100">{websiteUrl}</span>
+            </div>
+            <a
+              href={websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition-colors"
+            >
+              Visit Website ↗
+            </a>
+          </div>
+        )}
 
         <section className="bg-white border rounded-lg p-4 space-y-3 dark:border-slate-700 dark:bg-slate-900">
           <div className="flex flex-wrap items-center gap-3">
