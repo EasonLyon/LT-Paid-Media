@@ -58,14 +58,14 @@ type TierSelection = Record<Tier, boolean>;
 
 interface CampaignFiltersState {
   tiers: TierSelection;
-  paidFlag: boolean;
-  seoFlag: boolean;
+  paidFlags: { true: boolean; false: boolean };
+  seoFlags: { true: boolean; false: boolean };
 }
 
 interface AppliedCampaignFilters {
   tiers: Tier[];
-  paidFlag: boolean;
-  seoFlag: boolean;
+  paidFlags: boolean[];
+  seoFlags: boolean[];
 }
 
 const MIN_AD_SPEND_MYR = 1000;
@@ -296,8 +296,8 @@ export default function SemPage() {
   );
   const [campaignFilters, setCampaignFilters] = useState<CampaignFiltersState>({
     tiers: { A: true, B: false, C: false },
-    paidFlag: true,
-    seoFlag: false,
+    paidFlags: { true: true, false: false },
+    seoFlags: { true: false, false: false },
   });
   const [campaignPreview, setCampaignPreview] = useState<CampaignStructureRow[]>([]);
   const [campaignCsvName, setCampaignCsvName] = useState<string | null>(null);
@@ -1399,10 +1399,18 @@ export default function SemPage() {
       .filter(([, isOn]) => isOn)
       .map(([tier]) => tier);
 
+    const paidFlags = (Object.entries(campaignFilters.paidFlags) as Array<["true" | "false", boolean]>)
+      .filter(([, isOn]) => isOn)
+      .map(([key]) => key === "true");
+
+    const seoFlags = (Object.entries(campaignFilters.seoFlags) as Array<["true" | "false", boolean]>)
+      .filter(([, isOn]) => isOn)
+      .map(([key]) => key === "true");
+
     return {
       tiers: tiers.length ? tiers : ["A"],
-      paidFlag: campaignFilters.paidFlag,
-      seoFlag: campaignFilters.seoFlag,
+      paidFlags: paidFlags,
+      seoFlags: seoFlags,
     };
   };
 
@@ -1413,13 +1421,11 @@ export default function SemPage() {
     }));
   };
 
-  const handleFlagToggle = (key: "paidFlags" | "seoFlags", value: "true" | "false") => {
-    setCampaignFilters((prev) => {
-      if (key === "paidFlags") {
-        return { ...prev, paidFlag: value === "true" };
-      }
-      return { ...prev, seoFlag: value === "true" };
-    });
+  const handleFlagToggle = (type: "paidFlags" | "seoFlags", key: "true" | "false") => {
+    setCampaignFilters((prev) => ({
+      ...prev,
+      [type]: { ...prev[type], [key]: !prev[type][key] },
+    }));
   };
 
   const runCampaignStructureStep = async (options?: { manageBusy?: boolean }) => {
@@ -1433,9 +1439,9 @@ export default function SemPage() {
     startProgress();
     updateStepStatus("campaign", { status: "running", message: "Building campaign CSV" });
     push(
-      `Step 7 – Generating campaign structure with tiers=${filters.tiers.join(", ")} paid=${filters.paidFlag} seo=${
-        filters.seoFlag
-      }`,
+      `Step 7 – Generating campaign structure with tiers=${filters.tiers.join(", ")} paid=${filters.paidFlags.join(
+        ",",
+      )} seo=${filters.seoFlags.join(",")}`,
     );
     let completed = false;
     try {
@@ -1445,8 +1451,8 @@ export default function SemPage() {
         body: JSON.stringify({
           projectId,
           tiers: filters.tiers,
-          paidFlags: [filters.paidFlag],
-          seoFlags: [filters.seoFlag],
+          paidFlags: filters.paidFlags,
+          seoFlags: filters.seoFlags,
         }),
       });
       const json = (await res.json()) as {
@@ -1494,8 +1500,8 @@ export default function SemPage() {
     const filters = campaignFiltersApplied ?? getSelectedCampaignFilters();
     const params = new URLSearchParams({ projectId });
     if (filters.tiers.length) params.set("tiers", filters.tiers.join(","));
-    params.set("paidFlags", String(filters.paidFlag));
-    params.set("seoFlags", String(filters.seoFlag));
+    if (filters.paidFlags.length) params.set("paidFlags", filters.paidFlags.join(","));
+    if (filters.seoFlags.length) params.set("seoFlags", filters.seoFlags.join(","));
     try {
       const res = await fetch(`/api/sem/campaign-structure?${params.toString()}`);
       let errorJson: { error?: string } | null = null;
@@ -1634,10 +1640,10 @@ export default function SemPage() {
                 Tiers: {getSelectedCampaignFilters().tiers.join(", ")}
               </span>
               <span className="px-2 py-1 rounded bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-100">
-                Paid: {getSelectedCampaignFilters().paidFlag ? "true" : "false"}
+                Paid: {getSelectedCampaignFilters().paidFlags.join(", ")}
               </span>
               <span className="px-2 py-1 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-100">
-                SEO: {getSelectedCampaignFilters().seoFlag ? "true" : "false"}
+                SEO: {getSelectedCampaignFilters().seoFlags.join(", ")}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -1979,9 +1985,8 @@ export default function SemPage() {
                     {(["true", "false"] as const).map((flag) => (
                       <label key={flag} className="flex items-center gap-1">
                         <input
-                          type="radio"
-                          name="paid-flag"
-                          checked={campaignFilters.paidFlag === (flag === "true")}
+                          type="checkbox"
+                          checked={campaignFilters.paidFlags[flag]}
                           onChange={() => handleFlagToggle("paidFlags", flag)}
                           className="h-4 w-4"
                         />
@@ -1996,9 +2001,8 @@ export default function SemPage() {
                     {(["true", "false"] as const).map((flag) => (
                       <label key={flag} className="flex items-center gap-1">
                         <input
-                          type="radio"
-                          name="seo-flag"
-                          checked={campaignFilters.seoFlag === (flag === "true")}
+                          type="checkbox"
+                          checked={campaignFilters.seoFlags[flag]}
                           onChange={() => handleFlagToggle("seoFlags", flag)}
                           className="h-4 w-4"
                         />

@@ -1,0 +1,107 @@
+### Task
+Your task is to act as a **Senior Google Ads Strategist**. You will design a highly effective, performance-oriented Google Ads campaign structure based on the provided inputs and return the result strictly as a JSON object.
+
+---
+
+### Objectives
+
+- Design a clear, consolidated campaign structure suitable for:
+    - Driving high-intent traffic (Sales/Leads).
+    - Maximizing budget efficiency using modern bidding strategies.
+    - delivering relevant, conversion-oriented ad copy.
+- Adhere strictly to the "Hagakure" (consolidated) structure where possible to maximize data for machine learning.
+
+---
+
+### Inputs
+
+Use the following inputs:
+
+- Website: {{website}}
+- Goal: {{goal}}
+- Location (country): {{location}}
+- State / Area focus: {{state_list}}
+- Language: {{language}}
+- Monthly Budget (MYR): {{monthly_budget}}
+
+### Keywords Data
+{{keyword_data}}
+
+### Business Context
+{{context}}
+
+---
+
+### Knowledge Base: Google Ads Best Practices
+
+To ensure high performance, apply these strategic principles:
+
+1.  **Campaign Structure (Intent-Based):**
+    *   **Consolidation:** Avoid hyper-segmentation (SKAGs). Use fewer campaigns with broader, intent-matched Ad Groups.
+    *   **Categorization:** Split campaigns by high-level **Category** (e.g., "Men's Shoes" vs "Women's Shoes").
+    *   **Ad Groups:** Split by **Sub-Category + User Intent**.
+        *   *High Intent:* Transactional keywords ("buy", "price", "service near me"). High bids.
+        *   *Mid Intent:* Comparison/Specific keywords ("best running shoes", "leather sofa specs").
+        *   *Low Intent:* Informational ("how to clean shoes"). Lower bids or excluded initially.
+
+2.  **Bidding Strategy (The "Cold Start" Framework):**
+    *   **Phase 1 (Launch):** New campaigns lack conversion data. Use `Maximize Clicks` with a `MaxCPC_Cap` to drive traffic without overspending on single clicks.
+    *   **Phase 2 (Scale):** Once ~15 conversions are recorded, switch to Smart Bidding (`Target CPA` or `Maximize Conversions`).
+
+3.  **Ad Copy (RSAs):**
+    *   **Headlines:** Must be distinct.
+        *   *Pos 1-3:* Keywords & Direct Benefits.
+        *   *Pos 4-7:* Call to Actions (CTAs), Social Proof ("Trusted by 500+"), Urgency, Handling Objections.
+    *   **Descriptions:** One description should focus on the USP (Unique Selling Proposition), the other on a strong CTA.
+
+---
+
+### Output Logic & Schema Rules
+
+You must output a single JSON object strictly adhering to the provided schema. Follow these specific rules for each key:
+
+1.  **Campaigns Array**:
+    *   Limit to 1-3 highly relevant campaigns to consolidate budget.
+    *   **CampaignName**: STRICT FORMAT: `LT-A | [Index] | [YYYYMM] | [Goal] | [Type] | [Geo] | [Language] | [Category]`.
+        *   *Index*: 2-digit sequential number (e.g., `01`, `02`).
+        *   *Goal*: Shortened goal name (e.g., `Lead`, `Sales`).
+        *   *Geo*: ISO Code (e.g., `MY`, `SG`).
+        *   *Language*: ISO Code (e.g., `EN`, `ZH`).
+        *   *Category*: High-level vertical (e.g., `Furniture`, `Dental`).
+    *   **Location**:
+        *   If a State/City is provided, use `RadiusKm: 25`.
+        *   If only Country is provided, use `RadiusKm: null`.
+
+2.  **BiddingLifecycle**:
+    *   `Phase1_Launch`: Always set `StrategyType` to `MaximizeClicks`. **Context:** Calculate `MaxCPC_Cap_MYR` as **Daily Budget / 15** (aiming for ~15 clicks/day). **Constraints:** Never set below **2.00 MYR** (floor) and rarely above **12.00 MYR** (ceiling), unless the industry is extremely competitive (e.g., Legal/Finance).
+    *   `Switch_Condition`: Default `Threshold` to `15` conversions.
+    *   `Phase2_Scale`: Choose `TargetCPA` (efficiency) or `MaximizeConversions` (volume) based on the User's Goal.
+
+3.  **AdSchedule**:
+    *   **Context-Aware:** Customize based on the `Business Context`. Do not default to 24/7 unless it's an always-on e-commerce or emergency service.
+    *   **Creative Examples:**
+        *   *Retail/E-com:* Heavy up-weighting (+20%) on Evenings (19:00-23:00) & Weekends.
+        *   *B2B/Professional:* Mon-Fri, 08:00-19:00. Exclude weekends.
+        *   *Local Service (e.g., Plumber):* 07:00-22:00. Optional: +30% bid adj for "emergency" hours if applicable.
+        *   *F&B/Dining:* Spikes for Lunch (11:00-14:00) and Dinner (17:00-21:00).
+    *   **BidAdjustmentPercent:** Use creatively!
+        *   Apply `+10` to `+30` for high-conversion windows.
+        *   Apply `-20` to `-50` for low-intent hours (e.g., post-midnight) instead of turning off completely if traffic is cheap.
+
+4.  **AdGroups**:
+    *   **AdGroupName**: STRICT FORMAT: `[SubCategory] | [Intent - High/Mid/Low]`.
+    *   **DefaultMaxCPCMYR**: Set a baseline bid (slightly lower than the Campaign Cap).
+    *   **Targeting > Keywords**:
+        *   Prioritize `Phrase` and `Exact` match for the launch phase.
+        *   Ensure keywords are strictly relevant to the `SubCategory` and `Intent`.
+
+5.  **ResponsiveSearchAds**:
+    *   **Headlines**: Provide 5-10 headlines. Mix Keywords (30%), Benefits (40%), and CTAs (30%).
+    *   **Descriptions**: Provide 2-4 descriptions. Max 90 chars.
+
+6.  **NegativeKeywords**:
+    *   Include generic negatives (free, cheap, diy, job, career) if the goal is Sales/Leads.
+    *   Include obviously irrelevant terms based on the context.
+
+---
+**Output the JSON now:**

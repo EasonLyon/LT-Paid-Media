@@ -1,0 +1,312 @@
+{
+  "name": "search_campaign",
+  "strict": true,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "Campaigns": {
+        "type": "array",
+        "description": "List of campaigns to be created.",
+        "minItems": 1,
+        "maxItems": 10,
+        "items": {
+          "type": "object",
+          "properties": {
+            "CampaignName": {
+              "type": "string",
+              "description": "Name of the campaign. Format: 'LT-A | [Index] | [YYYYMM] | [Goal] | [Type] | [Geo] | [Language] | [Category]'. [Index] is a 2-digit sequential number (e.g. '01'). Use ISO codes for Geo (e.g. 'MY') and Language (e.g. 'EN'). [Category] represents the high-level business vertical (e.g. 'Furniture').",
+              "minLength": 1
+            },
+            "Goal": {
+              "type": "string",
+              "description": "Goal of the campaign.",
+              "enum": [
+                "Sales",
+                "Lead",
+                "Traffic",
+                "Local Store"
+              ]
+            },
+            "CampaignType": {
+              "type": "string",
+              "description": "Type of the campaign.",
+              "enum": [
+                "Search",
+                "PMax",
+                "Demand Gen",
+                "Display"
+              ]
+            },
+            "BudgetDailyMYR": {
+              "type": "number",
+              "description": "Daily budget for the campaign in MYR.",
+              "minimum": 0
+            },
+            "BiddingLifecycle": {
+              "type": "object",
+              "description": "Defines the phased bidding strategy for cold-starting campaigns.",
+              "properties": {
+                "Phase1_Launch": {
+                  "type": "object",
+                  "properties": {
+                    "StrategyType": { 
+                      "type": "string",
+                      "const": "MaximizeClicks" 
+                    },
+                    "MaxCPC_Cap_MYR": { 
+                      "type": "number", 
+                      "description": "Bid cap to prevent overspending on single clicks." 
+                    }
+                  },
+                  "required": ["StrategyType", "MaxCPC_Cap_MYR"],
+                  "additionalProperties": false
+                },
+                "Switch_Condition": {
+                  "type": "object",
+                  "properties": {
+                    "Metric": { 
+                      "type": "string",
+                      "const": "Conversions" 
+                    },
+                    "Threshold": { 
+                      "type": "integer", 
+                      "default": 15,
+                      "description": "Number of conversions required to trigger Phase 2." 
+                    }
+                  },
+                  "required": ["Metric", "Threshold"],
+                  "additionalProperties": false
+                },
+                "Phase2_Scale": {
+                  "type": "object",
+                  "properties": {
+                    "StrategyType": { 
+                      "type": "string",
+                      "enum": ["TargetCPA", "MaximizeConversions"] 
+                    },
+                    "TargetCPA_MYR": { 
+                      "type": ["number", "null"],
+                      "description": "Desired cost per acquisition. Null if using uncapped MaxConv."
+                    }
+                  },
+                  "required": ["StrategyType", "TargetCPA_MYR"],
+                  "additionalProperties": false
+                }
+              },
+              "required": ["Phase1_Launch", "Switch_Condition", "Phase2_Scale"],
+              "additionalProperties": false
+            },
+            "Language": {
+              "type": "string",
+              "description": "Language targeted by the campaign. Can be single or multiple languages separated by comma (e.g. 'English, Malay').",
+              "minLength": 1
+            },
+            "Location": {
+              "type": "object",
+              "properties": {
+                "Name": {
+                  "type": "string",
+                  "description": "Location name.",
+                  "minLength": 1
+                },
+                "RadiusKm": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Radius in kilometers for targeting, or null."
+                }
+              },
+              "required": [
+                "Name",
+                "RadiusKm"
+              ],
+              "additionalProperties": false
+            },
+            "AdSchedule": {
+              "type": "array",
+              "description": "Schedule for when the ads should run, including bid adjustments.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "DayOfWeek": {
+                    "type": "string",
+                    "enum": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+                    "description": "Day of the week."
+                  },
+                  "StartTime": {
+                    "type": "string",
+                    "pattern": "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$",
+                    "description": "Start time in HH:MM format (24-hour)."
+                  },
+                  "EndTime": {
+                    "type": "string",
+                    "pattern": "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$",
+                    "description": "End time in HH:MM format (24-hour)."
+                  },
+                  "BidAdjustmentPercent": {
+                    "type": "integer",
+                    "minimum": -90,
+                    "maximum": 900,
+                    "description": "Percentage to adjust the bid (-90 to 900). 0 means no adjustment."
+                  }
+                },
+                "required": ["DayOfWeek", "StartTime", "EndTime", "BidAdjustmentPercent"],
+                "additionalProperties": false
+              }
+            },
+            "NegativeKeywords": {
+              "type": "array",
+              "description": "List of negative keywords.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "Keyword": {
+                    "type": "string",
+                    "description": "Negative keyword.",
+                    "minLength": 1
+                  },
+                  "MatchType": {
+                    "type": "string",
+                    "description": "Keyword match type.",
+                    "enum": [
+                      "Broad",
+                      "Phrase",
+                      "Exact"
+                    ]
+                  }
+                },
+                "required": [
+                  "Keyword",
+                  "MatchType"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "AdGroups": {
+              "type": "array",
+              "description": "List of ad groups in the campaign.",
+              "minItems": 1,
+              "maxItems": 10,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "AdGroupName": {
+                    "type": "string",
+                    "description": "Name of the ad group. Format: '[SubCategory] | [Intent - High/Mid/Low/Remarketing]'. [SubCategory] is the specific product/service subset (e.g. 'Sofas'). [Intent] defines user funnel stage.",
+                    "minLength": 1
+                  },
+                  "DefaultMaxCPCMYR": {
+                    "type": "number",
+                    "description": "Default max CPC for this ad group in MYR.",
+                    "minimum": 0
+                  },
+                  "ResponsiveSearchAds": {
+                    "type": "array",
+                    "description": "Responsive search ads for this ad group.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "Headlines": {
+                          "type": "array",
+                          "description": "List of 3 to 10 headlines.",
+                          "minItems": 3,
+                          "maxItems": 10,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "Descriptions": {
+                          "type": "array",
+                          "description": "List of 2 to 4 descriptions.",
+                          "minItems": 2,
+                          "maxItems": 4,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      },
+                      "required": [
+                        "Headlines",
+                        "Descriptions"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "Targeting": {
+                    "type": "object",
+                    "properties": {
+                      "Keywords": {
+                        "type": "array",
+                        "description": "List of targeted keywords.",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "Keyword": {
+                              "type": "string",
+                              "description": "Target keyword.",
+                              "minLength": 1
+                            },
+                            "MatchType": {
+                              "type": "string",
+                              "description": "Keyword match type.",
+                              "enum": [
+                                "Broad",
+                                "Phrase",
+                                "Exact"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "Keyword",
+                            "MatchType"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "Keywords"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "AdGroupName",
+                  "DefaultMaxCPCMYR",
+                  "ResponsiveSearchAds",
+                  "Targeting"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "CampaignName",
+            "Goal",
+            "CampaignType",
+            "BudgetDailyMYR",
+            "BiddingLifecycle",
+            "Language",
+            "Location",
+            "AdSchedule",
+            "NegativeKeywords",
+            "AdGroups"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "Campaigns"
+    ],
+    "additionalProperties": false
+  }
+}
