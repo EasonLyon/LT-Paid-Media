@@ -69,7 +69,8 @@ You must output a single JSON object strictly adhering to the provided schema. F
         *   *Language*: ISO Code (e.g., `EN`, `ZH`).
         *   *Category*: High-level vertical (e.g., `Furniture`, `Dental`).
     *   **Location**:
-        *   If a State/City is provided, use `RadiusKm: 25`.
+        *   Context-Check: Check the Business Context for branch locations. If branches exist outside the main city center (e.g., Setia Alam vs KL), do not default to a simple radius. Instead, list specific cities or increase the radius to ensure all listed branches are covered.
+        *   Default: Only use `RadiusKm: 25` if no specific branch locations are listed.
         *   If only Country is provided, use `RadiusKm: null`.
 
 2.  **BiddingLifecycle**:
@@ -89,19 +90,26 @@ You must output a single JSON object strictly adhering to the provided schema. F
         *   Apply `-20` to `-50` for low-intent hours (e.g., post-midnight) instead of turning off completely if traffic is cheap.
 
 4.  **AdGroups**:
-    *   **AdGroupName**: STRICT FORMAT: `[SubCategory] | [Intent - High/Mid/Low]`.
+    *   **AdGroupName**: STRICT FORMAT: `[SubCategory] | [Intent - High/Mid/Low]` or `[SubCategory] | [Geo] | [Intent - High/Mid/Low]` if geo-segmented.
     *   **DefaultMaxCPCMYR**: Set a baseline bid (slightly lower than the Campaign Cap).
+    *   **Geo-Segmentation (Context-Aware):**
+        *   **When to Segment:** If Business Context lists distinct cities/areas (e.g., KL vs Petaling Jaya vs Subang) with sufficient search volume (>100 monthly searches), create separate Ad Groups per geo to ensure Headline relevance and landing page alignment.
     *   **Targeting > Keywords**:
-        *   Prioritize `Phrase` and `Exact` match for the launch phase.
-        *   Ensure keywords are strictly relevant to the `SubCategory` and `Intent`.
+        *   **Data-Driven Priority:** Strongly prioritize selecting keywords from the provided Keywords Data input to utilize actual volume and CPC metrics.
+        *   **Fallback Logic:** If the provided data is insufficient, irrelevant, or lacks niche coverage, you may supplement with highly relevant keywords based on your internal knowledge to ensure campaign quality.
+        *   **Selection Logic:** Look for the "sweet spot" of high relevance + decent search volume (from data).
+        *   **Geo-Relevance (if segmented):** Keywords containing location modifiers (e.g., "kindergarten petaling jaya") must be assigned to the matching geo Ad Group.
+        *   **Match Types:** Use Phrase and Exact match for the launch phase.
+
 
 5.  **ResponsiveSearchAds**:
     *   **Headlines**: Provide 5-10 headlines. Mix Keywords (30%), Benefits (40%), and CTAs (30%).
     *   **Descriptions**: Provide 2-4 descriptions. Max 90 chars.
 
 6.  **NegativeKeywords**:
-    *   Include generic negatives (free, cheap, diy, job, career) if the goal is Sales/Leads.
-    *   Include obviously irrelevant terms based on the context.
+    *   **Dirty Data Cleaning:** Actively scan the Keywords Data input for high-volume but irrelevant terms (e.g., "Instagram", "Login", "University", "Church", "Jobs") and add them here.
+    *   **Strategic Exclusion:** Exclude keywords that technically fit the category but misalign with the Business Context USP (e.g., if the school is "Play-Based," negate "Montessori" to avoid high bounce rates from rigid intent).
+    *   **Generic Negatives:** Include standard performance negatives (free, cheap, diy, salary, resume).
 
 ---
 **Output the JSON now:**

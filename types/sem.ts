@@ -262,12 +262,40 @@ export interface CampaignPlanLocation {
   RadiusKm: number | null;
 }
 
+export interface BiddingLifecyclePhase {
+  StrategyType: string;
+  MaxCPC_Cap_MYR?: number;
+  TargetCPA_MYR?: number;
+}
+
+export interface BiddingLifecycleSwitchCondition {
+  Metric: string;
+  Threshold: number;
+}
+
+export interface BiddingLifecycle {
+  Phase1_Launch?: BiddingLifecyclePhase;
+  Switch_Condition?: BiddingLifecycleSwitchCondition;
+  Phase2_Scale?: BiddingLifecyclePhase;
+  [key: string]: unknown;
+}
+
+export interface AdScheduleEntry {
+  DayOfWeek: string;
+  StartTime: string;
+  EndTime: string;
+  BidAdjustmentPercent: number;
+}
+
 export interface CampaignPlan {
   CampaignName: string;
   Goal: string;
   CampaignType: string;
   BudgetDailyMYR: number | null;
   TargetCPAMYR: number | null;
+  BiddingLifecycle?: BiddingLifecycle;
+  AdSchedule?: AdScheduleEntry[];
+  NegativeKeywords?: CampaignPlanKeyword[];
   Language: string;
   Location: CampaignPlanLocation;
   AdGroups: CampaignPlanAdGroup[];

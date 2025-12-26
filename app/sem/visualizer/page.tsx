@@ -277,6 +277,7 @@ function CampaignVisualizerPageContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [selectedAdGroup, setSelectedAdGroup] = useState<{ campaignIdx: number; adGroupIdx: number } | null>(null);
+  const [selectedCampaignSettings, setSelectedCampaignSettings] = useState<{ campaignIdx: number } | null>(null);
   const [expandedCampaigns, setExpandedCampaigns] = useState<Record<number, boolean>>({});
   const [campaignSort, setCampaignSort] = useState<SortState<keyof CampaignRow>>({
     column: "CampaignName",
@@ -960,6 +961,7 @@ function CampaignVisualizerPageContent() {
 
   const resetSelection = () => {
     setSelectedAdGroup(null);
+    setSelectedCampaignSettings(null);
   };
 
   const toggleSort = (current: SortState<string>, column: string): SortState<string> => {
@@ -973,6 +975,10 @@ function CampaignVisualizerPageContent() {
     selectedAdGroup &&
     campaigns[selectedAdGroup.campaignIdx]?.AdGroups?.[selectedAdGroup.adGroupIdx] &&
     campaigns[selectedAdGroup.campaignIdx];
+
+  const selectedCampaignSettingsData = selectedCampaignSettings
+    ? campaigns[selectedCampaignSettings.campaignIdx]
+    : null;
 
   const copyName = async (text: string, key: string) => {
     try {
@@ -1520,7 +1526,7 @@ function CampaignVisualizerPageContent() {
                             Budget: {formatCurrency(campaign.BudgetDailyMYR)}
                           </span>
                           <span className="px-2 py-1 rounded bg-white border dark:border-slate-600 dark:bg-slate-800">
-                            tCPA: {formatCurrency(campaign.TargetCPAMYR)}
+                            tCPA: {formatCurrency(campaign.BiddingLifecycle?.Phase2_Scale?.TargetCPA_MYR ?? campaign.TargetCPAMYR)}
                           </span>
                           <span className="px-2 py-1 rounded bg-white border dark:border-slate-600 dark:bg-slate-800">Lang: {campaign.Language || "—"}</span>
                           <span className="px-2 py-1 rounded bg-white border dark:border-slate-600 dark:bg-slate-800">
@@ -1532,6 +1538,22 @@ function CampaignVisualizerPageContent() {
                         <div className="text-sm text-gray-700 dark:text-slate-200">
                           {campaign.AdGroups?.length ?? 0} ad group(s) • Click to drill into Ads / Keywords / Negatives
                         </div>
+                        <button
+                          className={`w-full text-left border rounded-lg p-3 hover:border-blue-400 font-medium ${
+                            selectedCampaignSettings?.campaignIdx === campaignIdx
+                              ? "ring-2 ring-blue-400 bg-blue-50 dark:bg-blue-900/20"
+                              : "bg-white dark:bg-slate-800"
+                          } dark:border-slate-600 dark:text-slate-100 dark:hover:border-blue-500`}
+                          onClick={() => {
+                            setSelectedCampaignSettings({ campaignIdx });
+                            setSelectedAdGroup(null);
+                          }}
+                        >
+                          Campaign Settings
+                          <div className="text-xs text-gray-500 font-normal mt-1">
+                            Bidding Strategy • Ad Schedule • Negative Keywords
+                          </div>
+                        </button>
                         <div className="grid md:grid-cols-2 gap-2">
                           {(campaign.AdGroups ?? []).map((group, adGroupIdx) => {
                             const targeting = group.Targeting;
@@ -1547,7 +1569,10 @@ function CampaignVisualizerPageContent() {
                                     ? "ring-2 ring-blue-400"
                                     : ""
                                 } dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:border-blue-500`}
-                                onClick={() => setSelectedAdGroup({ campaignIdx, adGroupIdx })}
+                                onClick={() => {
+                                  setSelectedAdGroup({ campaignIdx, adGroupIdx });
+                                  setSelectedCampaignSettings(null);
+                                }}
                               >
                                 <div className="font-medium">{group.AdGroupName ?? `Ad Group ${adGroupIdx + 1}`}</div>
                                 <div className="text-xs text-gray-600 flex flex-wrap gap-2 mt-1 dark:text-slate-300">
@@ -1575,10 +1600,16 @@ function CampaignVisualizerPageContent() {
               </div>
               <div className="border rounded-lg bg-gray-50 p-4 h-full">
                 <div className="flex flex-col gap-3 h-full">
-                  {!selectedAdGroupData && (
+                  {!selectedAdGroupData && !selectedCampaignSettingsData && (
                     <div className="text-sm text-gray-700">
-                      Select an ad group on the left to see ads, keywords, and negatives here.
+                      Select &quot;Campaign Settings&quot; or an &quot;Ad Group&quot; on the left to view details here.
                     </div>
+                  )}
+                  {selectedCampaignSettingsData && (
+                    <CampaignSettingsPanel
+                      campaign={selectedCampaignSettingsData}
+                      onClose={() => setSelectedCampaignSettings(null)}
+                    />
                   )}
                   {selectedAdGroupData ? (
                   <div className="space-y-3">
@@ -1993,6 +2024,211 @@ function TableCard({ title, children, note, onExport }: { title: string; childre
   );
 }
 
+function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; onClose: () => void }) {
+  const { BiddingLifecycle, AdSchedule, NegativeKeywords } = campaign;
+  const [copiedNegatives, setCopiedNegatives] = useState(false);
+
+  const copyNegativeKeywords = async () => {
+    if (!NegativeKeywords) return;
+    const text = NegativeKeywords.map((kw) => {
+      if (kw.MatchType === "Exact") return `[${kw.Keyword}]`;
+      if (kw.MatchType === "Phrase") return `"${kw.Keyword}"`;
+      return kw.Keyword;
+    }).join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedNegatives(true);
+      setTimeout(() => setCopiedNegatives(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy negatives", err);
+    }
+  };
+
+  const dayMap: Record<string, number> = {
+    Monday: 0,
+    Tuesday: 1,
+    Wednesday: 2,
+    Thursday: 3,
+    Friday: 4,
+    Saturday: 5,
+    Sunday: 6,
+  };
+  const hours = Array.from({ length: 24 }, (_, i) => i);
+  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+  // Grid data: 7 rows x 24 cols. Store bid adj percent or null if not active.
+  const scheduleGrid = useMemo(() => {
+    const grid: Array<Array<{ active: boolean; bidAdj: number }>> = Array.from({ length: 7 }, () =>
+      Array.from({ length: 24 }, () => ({ active: false, bidAdj: 0 })),
+    );
+
+    if (!AdSchedule) return grid;
+
+    AdSchedule.forEach((entry) => {
+      const dayIdx = dayMap[entry.DayOfWeek];
+      if (dayIdx === undefined) return;
+
+      const startHour = parseInt(entry.StartTime.split(":")[0], 10);
+      let endHour = parseInt(entry.EndTime.split(":")[0], 10);
+      if (endHour === 0 && entry.EndTime !== "00:00") endHour = 24; // Handle 23:00-00:00 as end of day
+
+      for (let h = startHour; h < endHour; h++) {
+        if (h >= 0 && h < 24) {
+          grid[dayIdx][h] = { active: true, bidAdj: entry.BidAdjustmentPercent };
+        }
+      }
+    });
+    return grid;
+  }, [AdSchedule]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-xs text-gray-500">Campaign Settings</div>
+          <div className="font-semibold text-lg">{campaign.CampaignName}</div>
+        </div>
+        <button className="border rounded px-3 py-1 text-sm" onClick={onClose}>
+          Close
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        <div className="font-medium border-b pb-1">Bidding Strategy</div>
+        {BiddingLifecycle ? (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+            {BiddingLifecycle.Phase1_Launch && (
+              <div className="bg-blue-50 p-3 rounded border border-blue-100 dark:bg-blue-900/30 dark:border-blue-800">
+                <div className="font-medium text-blue-800 dark:text-blue-200 mb-1">Phase 1: Launch</div>
+                <div className="text-gray-700 dark:text-blue-100">
+                  {BiddingLifecycle.Phase1_Launch.StrategyType}
+                </div>
+                {BiddingLifecycle.Phase1_Launch.MaxCPC_Cap_MYR && (
+                  <div className="text-xs text-gray-500 dark:text-blue-300">
+                    Cap: {formatCurrency(BiddingLifecycle.Phase1_Launch.MaxCPC_Cap_MYR)}
+                  </div>
+                )}
+              </div>
+            )}
+            {BiddingLifecycle.Switch_Condition && (
+              <div className="bg-gray-50 p-3 rounded border border-gray-200 flex flex-col justify-center items-center text-center dark:bg-slate-700 dark:border-slate-600">
+                <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Switch Condition</div>
+                <div className="font-medium">
+                  {BiddingLifecycle.Switch_Condition.Metric} &ge; {BiddingLifecycle.Switch_Condition.Threshold}
+                </div>
+              </div>
+            )}
+            {BiddingLifecycle.Phase2_Scale && (
+              <div className="bg-green-50 p-3 rounded border border-green-100 dark:bg-green-900/30 dark:border-green-800">
+                <div className="font-medium text-green-800 dark:text-green-200 mb-1">Phase 2: Scale</div>
+                <div className="text-gray-700 dark:text-green-100">
+                  {BiddingLifecycle.Phase2_Scale.StrategyType}
+                </div>
+                {BiddingLifecycle.Phase2_Scale.TargetCPA_MYR && (
+                  <div className="text-xs text-gray-500 dark:text-green-300">
+                    tCPA: {formatCurrency(BiddingLifecycle.Phase2_Scale.TargetCPA_MYR)}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-sm text-gray-500">No bidding lifecycle data.</div>
+        )}
+      </div>
+
+      <div className="space-y-3">
+        <div className="font-medium border-b pb-1 flex items-center justify-between">
+          <span>Ad Schedule (Dayparting)</span>
+          <div className="flex items-center gap-2 text-xs font-normal">
+            <span className="flex items-center gap-1"><span className="w-3 h-3 bg-gray-200 border rounded-sm"></span> 0%</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 bg-green-200 border rounded-sm"></span> +Adj</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 bg-red-200 border rounded-sm"></span> -Adj</span>
+          </div>
+        </div>
+        {AdSchedule && AdSchedule.length > 0 ? (
+          <div className="overflow-x-auto">
+            <div className="min-w-[600px]">
+              <div className="flex">
+                <div className="w-10"></div>
+                {hours.map((h) => (
+                  <div key={h} className="flex-1 text-center text-[10px] text-gray-500 border-l border-transparent">
+                    {h}
+                  </div>
+                ))}
+              </div>
+              {days.map((day, dIdx) => (
+                <div key={day} className="flex items-center h-8 text-xs">
+                  <div className="w-10 font-medium text-gray-600 dark:text-gray-400">{day}</div>
+                  {hours.map((h) => {
+                    const cell = scheduleGrid[dIdx][h];
+                    let bgClass = "bg-transparent";
+                    if (cell.active) {
+                      if (cell.bidAdj > 0) bgClass = "bg-green-200 dark:bg-green-900/60 text-green-800 dark:text-green-200";
+                      else if (cell.bidAdj < 0) bgClass = "bg-red-200 dark:bg-red-900/60 text-red-800 dark:text-red-200";
+                      else bgClass = "bg-blue-100 dark:bg-blue-800";
+                    } else {
+                      bgClass = "bg-gray-50 dark:bg-slate-800/50";
+                    }
+
+                    return (
+                      <div
+                        key={h}
+                        className={`flex-1 h-full border border-white dark:border-slate-900 flex items-center justify-center ${bgClass}`}
+                        title={`${day} ${h}:00 - ${cell.active ? (cell.bidAdj !== 0 ? `${cell.bidAdj > 0 ? "+" : ""}${cell.bidAdj}%` : "Active") : "Inactive"}`}
+                      >
+                        {cell.active && cell.bidAdj !== 0 && (
+                          <span className="text-[10px] font-bold leading-none">
+                            {cell.bidAdj > 0 ? "+" : ""}
+                            {cell.bidAdj}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm text-gray-500">No ad schedule defined.</div>
+        )}
+      </div>
+
+      <div className="space-y-3">
+        <div className="font-medium border-b pb-1 flex items-center justify-between">
+          <span>Negative Keywords ({NegativeKeywords?.length ?? 0})</span>
+          {NegativeKeywords && NegativeKeywords.length > 0 && (
+            <button
+              onClick={() => void copyNegativeKeywords()}
+              className="text-xs px-2 py-1 border rounded hover:bg-gray-100 dark:hover:bg-slate-700 flex items-center gap-1"
+            >
+              {copiedNegatives ? <CheckIcon className="w-3 h-3 text-green-600" /> : <ClipboardIcon className="w-3 h-3" />}
+              {copiedNegatives ? "Copied!" : "Copy All to Clipboard"}
+            </button>
+          )}
+        </div>
+        {NegativeKeywords && NegativeKeywords.length > 0 ? (
+          <div className="max-h-60 overflow-y-auto border rounded bg-gray-50 p-2 dark:bg-slate-800 dark:border-slate-700">
+            <div className="flex flex-wrap gap-2">
+              {NegativeKeywords.map((kw, i) => (
+                <span
+                  key={i}
+                  className="px-2 py-1 bg-white border rounded text-xs text-gray-700 dark:bg-slate-700 dark:border-slate-600 dark:text-slate-200"
+                >
+                  {kw.Keyword} <span className="text-gray-400 dark:text-gray-500">({kw.MatchType})</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm text-gray-500">No negative keywords.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AdGroupTabs({
   adGroup,
   targeting,
@@ -2000,32 +2236,34 @@ function AdGroupTabs({
   adGroup?: CampaignPlanAdGroup;
   targeting?: CampaignPlanAdGroup["Targeting"];
 }) {
-  const [tab, setTab] = useState<"ads" | "keywords" | "negatives">("ads");
+  const [tab, setTab] = useState<"ads" | "keywords">("ads");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const [keywordText, setKeywordText] = useState<string>("");
-  const [negativeText, setNegativeText] = useState<string>("");
-  const ads = Array.isArray(adGroup?.ResponsiveSearchAds) ? adGroup.ResponsiveSearchAds ?? [] : [];
-  const keywords = keywordList(targeting, false);
-  const negatives = keywordList(targeting, true);
-  const keywordAverages = computeKeywordAverages(keywords);
-  const negativeAverages = computeKeywordAverages(negatives);
+  const [keywordText, setKeywordText] = useState("");
 
   const markCopied = (key: string) => {
     setCopiedKey(key);
     window.setTimeout(() => setCopiedKey((current) => (current === key ? null : current)), 1200);
   };
 
+  const ads = Array.isArray(adGroup?.ResponsiveSearchAds) ? adGroup.ResponsiveSearchAds ?? [] : [];
+  const keywords = keywordList(targeting, false);
+  const keywordAverages = computeKeywordAverages(keywords);
+
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     const formatKw = (kw: CampaignPlanKeyword) => {
+      const raw = kw.Keyword.trim();
       const match = kw.MatchType?.toLowerCase() ?? "";
-      if (match.includes("exact")) return `[${kw.Keyword}]`;
-      if (match.includes("phrase")) return `"${kw.Keyword}"`;
-      return kw.Keyword;
+      if (match.includes("exact")) {
+        return raw.startsWith("[") && raw.endsWith("]") ? raw : `[${raw}]`;
+      }
+      if (match.includes("phrase")) {
+        return raw.startsWith('"') && raw.endsWith('"') ? raw : `"${raw}"`;
+      }
+      return raw;
     };
-    setKeywordText(keywords.map(formatKw).join(", "));
-    setNegativeText(negatives.map(formatKw).join(", "));
-  }, [keywords, negatives]);
+    setKeywordText(keywords.map(formatKw).join("\n"));
+  }, [keywords]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   if (!adGroup) {
@@ -2075,12 +2313,6 @@ function AdGroupTabs({
           onClick={() => setTab("keywords")}
         >
           Keywords ({keywords.length})
-        </button>
-        <button
-          className={`px-3 py-1 rounded border ${tab === "negatives" ? "bg-blue-600 text-white" : "bg-white"}`}
-          onClick={() => setTab("negatives")}
-        >
-          Negative Keywords ({negatives.length})
         </button>
       </div>
 
@@ -2227,74 +2459,6 @@ function AdGroupTabs({
               rows={3}
               value={keywordText}
               onChange={(e) => setKeywordText(e.target.value)}
-            />
-          </div>
-        </div>
-      )}
-
-      {tab === "negatives" && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm border-collapse">
-            <thead>
-              <tr>
-                <th className="border-b px-2 py-1 text-left">Keyword</th>
-                <th className="border-b px-2 py-1 text-left">MatchType</th>
-                <th className="border-b px-2 py-1 text-left">Avg Monthly Searches</th>
-                <th className="border-b px-2 py-1 text-left">CPC (MYR)</th>
-                <th className="border-b px-2 py-1 text-left">Competition</th>
-              </tr>
-            </thead>
-            <tbody>
-              {negatives.map((kw, idx) => (
-                <tr key={idx} className="odd:bg-gray-50">
-                  <td className="px-2 py-1">{kw.Keyword}</td>
-                  <td className="px-2 py-1">{kw.MatchType}</td>
-                  <td className="px-2 py-1">{formatNumber(kw.AvgMonthlySearches ?? null)}</td>
-                  <td className="px-2 py-1">{formatCpc(kw.CPC ?? null)}</td>
-                  <td className="px-2 py-1">{kw.CompetitionIndex ?? "—"}</td>
-                </tr>
-              ))}
-              {negatives.length === 0 && (
-                <tr>
-                  <td className="px-2 py-1 text-sm text-gray-600" colSpan={5}>
-                    No negatives available.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-            <tfoot>
-              <tr className="bg-blue-50 font-medium">
-              <td className="px-2 py-2 text-right" colSpan={2}>
-                Averages
-              </td>
-              <td className="px-2 py-2">{formatNumber(negativeAverages.avgMonthlySearches ?? null)}</td>
-              <td className="px-2 py-2">{formatCpc(negativeAverages.avgCpc ?? null)}</td>
-              <td className="px-2 py-2">{formatDecimal(negativeAverages.avgCompetition ?? null)}</td>
-            </tr>
-          </tfoot>
-          </table>
-          <div className="mt-3 space-y-2">
-            <div className="flex items-center justify-between text-xs text-gray-600">
-              <span>All negative keywords (comma separated, formatted by match type)</span>
-              <button
-                type="button"
-                className={`flex items-center gap-1 px-2 py-1 border rounded transition ${
-                  copiedKey === "negatives" ? "bg-green-100 text-green-800 border-green-300" : ""
-                }`}
-                onClick={() => {
-                  void copyText(negativeText);
-                  markCopied("negatives");
-                }}
-              >
-                {copiedKey === "negatives" ? <CheckIcon className="w-4 h-4" /> : <ClipboardIcon className="w-4 h-4" />}
-                <span>{copiedKey === "negatives" ? "Copied" : "Copy"}</span>
-              </button>
-            </div>
-            <textarea
-              className="w-full border rounded p-2 text-sm"
-              rows={3}
-              value={negativeText}
-              onChange={(e) => setNegativeText(e.target.value)}
             />
           </div>
         </div>
