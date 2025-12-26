@@ -127,3 +127,30 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+export async function DELETE(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const projectId = searchParams.get("projectId");
+  const file = searchParams.get("file");
+
+  if (!projectId || !file) {
+    return NextResponse.json({ error: "projectId and file are required" }, { status: 400 });
+  }
+  if (!SAFE_FILENAME.test(projectId) || !SAFE_FILENAME.test(file) || file.includes("..")) {
+    return NextResponse.json({ error: "Invalid projectId or file" }, { status: 400 });
+  }
+
+  try {
+    // Dynamically import to avoid import cycles if any, though likely safe here.
+    // Using the same lib import as above
+    const { deleteOutputFile } = await import("@/lib/storage/project-files");
+    const deleted = await deleteOutputFile(projectId, file);
+    if (!deleted) {
+      return NextResponse.json({ error: "File not found or could not be deleted" }, { status: 404 });
+    }
+    return NextResponse.json({ deleted: true, file });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unable to delete file";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
