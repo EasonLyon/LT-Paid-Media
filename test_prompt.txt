@@ -90,21 +90,26 @@ You must output a single JSON object strictly adhering to the provided schema. F
         *   Apply `-20` to `-50` for low-intent hours (e.g., post-midnight) instead of turning off completely if traffic is cheap.
 
 4.  **AdGroups**:
-    *   **AdGroupName**: STRICT FORMAT: `[SubCategory] | [Intent - High/Mid/Low]` or `[SubCategory] | [Geo] | [Intent - High/Mid/Low]` if geo-segmented.
+    *   **AdGroupName**: STRICT FORMAT: `[SubCategory] | [Intent - High/Mid/Low] { | Phase 2 }`.
+        *   *Note:* Append `| Phase 2` only for ad groups intended for future scaling (e.g., Broad Match or Low Intent).
+    *   **Geo-Segmentation**: If the `Business Context` lists distinct cities with sufficient search volume (e.g., KL vs Petaling Jaya), create separate Ad Groups for them to ensure Headline relevance.
     *   **DefaultMaxCPCMYR**: Set a baseline bid (slightly lower than the Campaign Cap).
-    *   **Geo-Segmentation (Context-Aware):**
-        *   **When to Segment:** If Business Context lists distinct cities/areas (e.g., KL vs Petaling Jaya vs Subang) with sufficient search volume (>100 monthly searches), create separate Ad Groups per geo to ensure Headline relevance and landing page alignment.
     *   **Targeting > Keywords**:
-        *   **Data-Driven Priority:** Strongly prioritize selecting keywords from the provided Keywords Data input to utilize actual volume and CPC metrics.
-        *   **Fallback Logic:** If the provided data is insufficient, irrelevant, or lacks niche coverage, you may supplement with highly relevant keywords based on your internal knowledge to ensure campaign quality.
-        *   **Selection Logic:** Look for the "sweet spot" of high relevance + decent search volume (from data).
-        *   **Geo-Relevance (if segmented):** Keywords containing location modifiers (e.g., "kindergarten petaling jaya") must be assigned to the matching geo Ad Group.
-        *   **Match Types:** Use Phrase and Exact match for the launch phase.
-
+        *   **Data-Driven Priority**: **Strongly prioritize** selecting keywords from the provided `Keywords Data` input to utilize actual volume and CPC metrics.
+        *   **Fallback Logic**: If the provided data is insufficient, irrelevant, or lacks niche coverage, you may **supplement** with highly relevant keywords based on your internal knowledge to ensure campaign quality.
+        *   **Selection Logic**: Look for the "sweet spot" of high relevance + decent search volume.
+        *   **Match Types**: Use `Phrase` and `Exact` match for standard groups. Use `Broad` match **only** if the `AdGroupName` includes the `| Phase 2` tag.
+        *   **Anti-Cannibalization**: Do not repeat the exact same keyword across multiple active groups. If a specific intent (e.g., "Fees") has its own Ad Group, ensure those terms are added as **Negative Keywords** in the Generic Ad Groups.
 
 5.  **ResponsiveSearchAds**:
-    *   **Headlines**: Provide 5-10 headlines. Mix Keywords (30%), Benefits (40%), and CTAs (30%).
-    *   **Descriptions**: Provide 2-4 descriptions. Max 90 chars.
+    * **Copywriting Best Practices**:
+        * **Title Case**: Capitalize the first letter of each major word (e.g., "Best [Service] In [Location]").
+        * **User-Centric**: Focus on the user's needs ("Get Your Quote," "Improve Your Skills") rather than just the brand.
+        * **Specificity**: Avoid generic fluff (e.g., "Best Services"). Use concrete details (e.g., "Award-Winning [Feature]", "24/7 Support").
+    * **Headlines**: Provide 5-10 distinct headlines.
+        * *Asset Mix:* Ensure the output covers the strategy defined in the Knowledge Base (Keywords, Benefits, Social Proof, and CTAs).
+    * **Descriptions**: Provide 2-4 descriptions (Max 90 chars).
+        * *Structure:* Ensure distinct angles—one focusing on the **Value Proposition/Solution**, and another focusing on a strong **Call to Action**.
 
 6.  **NegativeKeywords**:
     *   **Dirty Data Cleaning:** Actively scan the Keywords Data input for high-volume but irrelevant terms (e.g., "Instagram", "Login", "University", "Church", "Jobs") and add them here.
