@@ -1579,14 +1579,8 @@ function CampaignVisualizerPageContent() {
                                   <span className="px-2 py-1 rounded bg-blue-50 text-blue-800 dark:bg-blue-900/30 dark:text-blue-100">
                                     CPC (MYR): {formatCpc(group.DefaultMaxCPCMYR)}
                                   </span>
-                                  <span className="px-2 py-1 rounded bg-green-50 text-green-800 dark:bg-green-900/30 dark:text-green-200">
-                                    Ads: {ads.length}
-                                  </span>
                                   <span className="px-2 py-1 rounded bg-gray-100 text-gray-800 dark:bg-slate-700 dark:text-slate-100">
                                     Keywords: {keywords.length}
-                                  </span>
-                                  <span className="px-2 py-1 rounded bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-100">
-                                    Negatives: {negatives.length}
                                   </span>
                                 </div>
                               </button>

@@ -103,29 +103,43 @@
             },
             "Location": {
               "type": "object",
+              "description": "Geo-targeting settings. Supports multiple distinct locations and strict targeting modes.",
               "properties": {
-                "Name": {
+                "TargetingMethod": {
                   "type": "string",
-                  "description": "Location name.",
-                  "minLength": 1
+                  "enum": ["PresenceOnly", "PresenceOrInterest"],
+                  "description": "Strictness of location targeting. 'PresenceOnly' = People IN the location. 'PresenceOrInterest' = People IN or INTERESTED IN the location."
                 },
-                "RadiusKm": {
-                  "anyOf": [
-                    {
-                      "type": "number",
-                      "minimum": 0
+                "Included": {
+                  "type": "array",
+                  "description": "List of positive location targets.",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "Name": {
+                        "type": "string",
+                        "description": "City, State, or Area name."
+                      },
+                      "RadiusKm": {
+                        "anyOf": [
+                          { "type": "number", "minimum": 0 },
+                          { "type": "null" }
+                        ],
+                        "description": "Radius in km. Use null for direct City/State targeting."
+                      }
                     },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "description": "Radius in kilometers for targeting, or null."
+                    "required": ["Name", "RadiusKm"]
+                  }
+                },
+                "Excluded": {
+                  "type": "array",
+                  "description": "List of negative location targets (e.g., specific states to avoid).",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
-              "required": [
-                "Name",
-                "RadiusKm"
-              ],
+              "required": ["TargetingMethod", "Included", "Excluded"],
               "additionalProperties": false
             },
             "AdSchedule": {

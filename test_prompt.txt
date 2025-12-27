@@ -27,6 +27,10 @@ Use the following inputs:
 ### Keywords Data
 {{keyword_data}}
 
+**Keywords Data Format & Usage:**
+- **Format:** CSV rows: `keyword, avg_monthly_searches, cpc`.
+- **Usage:** Use `avg_monthly_searches` to gauge demand and `cpc` to estimate budget impact. Prioritize keywords with a good balance of volume and cost efficiency when populating Ad Groups.
+
 ### Business Context
 {{context}}
 
@@ -69,9 +73,11 @@ You must output a single JSON object strictly adhering to the provided schema. F
         *   *Language*: ISO Code (e.g., `EN`, `ZH`).
         *   *Category*: High-level vertical (e.g., `Furniture`, `Dental`).
     *   **Location**:
-        *   Context-Check: Check the Business Context for branch locations. If branches exist outside the main city center (e.g., Setia Alam vs KL), do not default to a simple radius. Instead, list specific cities or increase the radius to ensure all listed branches are covered.
-        *   Default: Only use `RadiusKm: 25` if no specific branch locations are listed.
-        *   If only Country is provided, use `RadiusKm: null`.
+        *   **Location Consolidation & Strictness**:
+            *   **Consolidation**: If the Business Context lists multiple distinct branches (e.g., KL, Penang, Johor), generate a single campaign. Populate `Location.Included` with all valid target cities and `Location.Excluded` with irrelevant regions (e.g., "East Malaysia" if Peninsular only).
+            *   **TargetingMethod Logic**:
+                *   Default to `PresenceOnly` for Local Services (Education, Medical, Home Services) where the user must physically visit the location. This prevents wasted budget from users in other regions merely "researching" the area.
+                *   Use `PresenceOrInterest` ONLY for Tourism, Real Estate, or Nationwide E-commerce shipping.
 
 2.  **BiddingLifecycle**:
     *   `Phase1_Launch`: Always set `StrategyType` to `MaximizeClicks`. **Context:** Calculate `MaxCPC_Cap_MYR` as **Daily Budget / 15** (aiming for ~15 clicks/day). **Constraints:** Never set below **2.00 MYR** (floor) and rarely above **12.00 MYR** (ceiling), unless the industry is extremely competitive (e.g., Legal/Finance).
