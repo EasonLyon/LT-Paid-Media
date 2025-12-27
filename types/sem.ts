@@ -258,8 +258,9 @@ export interface CampaignPlanAdGroup {
 }
 
 export interface CampaignPlanLocation {
-  Name: string;
-  RadiusKm: number | null;
+  TargetingMethod: "PresenceOnly" | "PresenceOrInterest";
+  Included: { Name: string; RadiusKm: number | null }[];
+  Excluded: string[];
 }
 
 export interface BiddingLifecyclePhase {
@@ -296,13 +297,32 @@ export interface CampaignPlan {
   BiddingLifecycle?: BiddingLifecycle;
   AdSchedule?: AdScheduleEntry[];
   NegativeKeywords?: CampaignPlanKeyword[];
-  Language: string;
+  Language: string[];
   Location: CampaignPlanLocation;
   AdGroups: CampaignPlanAdGroup[];
 }
 
+export interface OptimizationPlaybookRule {
+  RuleName: string;
+  Frequency: string;
+  Condition: string;
+  Action: string;
+  Rationale: string;
+}
+
+export interface OptimizationPlaybookMetrics {
+  Target_CPL_MYR: number;
+  Max_CPL_Ceiling_MYR: number;
+}
+
+export interface OptimizationPlaybook {
+  Metrics_Benchmarks: OptimizationPlaybookMetrics;
+  Rules_Of_Engagement: OptimizationPlaybookRule[];
+}
+
 export interface CampaignPlanPayload {
   Campaigns: CampaignPlan[];
+  OptimizationPlaybook?: OptimizationPlaybook;
 }
 
 export interface DataForSeoSearchVolumeResponse {

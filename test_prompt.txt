@@ -40,7 +40,12 @@ Use the following inputs:
 
 To ensure high performance, apply these strategic principles:
 
-1.  **Campaign Structure (Intent-Based):**
+1.  **Campaign Type Selection Guide:**
+    *   **Search:** Use as the Default for all Lead Generation, Services, B2B, and High-Intent goals.
+    *   **PMax:** Use Only if the business has Physical Locations (for Store Visits) or sells products online (E-commerce).
+    *   **Demand Gen / Display:** Use Only if the goal is explicitly "Brand Awareness" or "Visual Reach".
+
+2.  **Campaign Structure (Intent-Based):**
     *   **Consolidation:** Avoid hyper-segmentation (SKAGs). Use fewer campaigns with broader, intent-matched Ad Groups.
     *   **Categorization:** Split campaigns by high-level **Category** (e.g., "Men's Shoes" vs "Women's Shoes").
     *   **Ad Groups:** Split by **Sub-Category + User Intent**.
@@ -48,11 +53,11 @@ To ensure high performance, apply these strategic principles:
         *   *Mid Intent:* Comparison/Specific keywords ("best running shoes", "leather sofa specs").
         *   *Low Intent:* Informational ("how to clean shoes"). Lower bids or excluded initially.
 
-2.  **Bidding Strategy (The "Cold Start" Framework):**
+3.  **Bidding Strategy (The "Cold Start" Framework):**
     *   **Phase 1 (Launch):** New campaigns lack conversion data. Use `Maximize Clicks` with a `MaxCPC_Cap` to drive traffic without overspending on single clicks.
     *   **Phase 2 (Scale):** Once ~15 conversions are recorded, switch to Smart Bidding (`Target CPA` or `Maximize Conversions`).
 
-3.  **Ad Copy (RSAs):**
+4.  **Ad Copy (RSAs):**
     *   **Headlines:** Must be distinct.
         *   *Pos 1-3:* Keywords & Direct Benefits.
         *   *Pos 4-7:* Call to Actions (CTAs), Social Proof ("Trusted by 500+"), Urgency, Handling Objections.
@@ -70,8 +75,13 @@ You must output a single JSON object strictly adhering to the provided schema. F
         *   *Index*: 2-digit sequential number (e.g., `01`, `02`).
         *   *Goal*: Shortened goal name (e.g., `Lead`, `Sales`).
         *   *Geo*: ISO Code (e.g., `MY`, `SG`).
-        *   *Language*: ISO Code (e.g., `EN`, `ZH`).
+        *   *Language*: Primary ISO Code (e.g., `EN` or `EN-MS`).
         *   *Category*: High-level vertical (e.g., `Furniture`, `Dental`).
+    *   **Language**:
+        *   **Logic**: Determine the languages array based on Brand Positioning.
+        *   **Mass Market / Local**: Use `["en", "ms"]`. (Most Malaysians use Malay/English interface settings).
+        *   **Premium / International / Expat**: Use `["en"]` only. (Filters out lower-intent local traffic).
+        *   **Chinese-Speaking Niche**: Use `["en", "zh"]`.
     *   **Location**:
         *   **Location Consolidation & Strictness**:
             *   **Consolidation**: If the Business Context lists multiple distinct branches (e.g., KL, Penang, Johor), generate a single campaign. Populate `Location.Included` with all valid target cities and `Location.Excluded` with irrelevant regions (e.g., "East Malaysia" if Peninsular only).
@@ -123,4 +133,42 @@ You must output a single JSON object strictly adhering to the provided schema. F
     *   **Generic Negatives:** Include standard performance negatives (free, cheap, diy, salary, resume).
 
 ---
+
+## Optimization Playbook Logic
+
+This acts as a simple, high-impact manual for a non-expert user to manage the account.
+
+### 1. Benchmarks (CPL)
+* **Target_CPL_MYR**: If historical data is available, use the account's last 30-day average. If not, use Formula: `Estimated CPC / 0.03` (assuming 3% CVR).
+* **Max_CPL_Ceiling_MYR**: Set this to **2x** the Target CPL. This is the "danger zone."
+
+### 2. Rules of Engagement (Writing Style)
+* **Tone**: Use simple, direct English. No jargon.
+* **Frequency**: Map specific rules to specific days (e.g., Budget checks = Weekly; Search Terms = Bi-weekly).
+* **Context**: All decisions must be based on **"Last 30 Days"** data unless specified otherwise.
+
+### 3. Required Scenarios to Cover
+Generate recommendations based on these 5 logic gates:
+
+1.  **The "Search Term Hygiene" Rule (Negative Keywords)**
+    * *Goal:* Prevent wasted spend.
+    * *Trigger:* Search terms with > 50 impressions and < 1% CTR, or clearly irrelevant intent.
+    * *Action:* Add as Negative Keyword.
+
+2.  **The "Stop Loss" Rule (Pausing Bleeders)**
+    * *Trigger:* Keyword spends > 1.5x Target CPL with 0 conversions **AND** has at least 10 clicks.
+    * *Action:* Pause the keyword.
+
+3.  **The "Winner's Circle" Rule (Scaling Up)**
+    * *Trigger:* CPA is < Target CPL **AND** Search Lost IS (Budget) > 10%.
+    * *Action:* Increase daily budget by 10-20%.
+
+4.  **The "Ad Copy Refresh" Rule (CTR & Quality Score)**
+    * *Trigger:* Ad CTR < 2% (Search) OR Ad Relevance is "Below Average."
+    * *Action:* Rewrite headlines to include the main keyword.
+
+5.  **The "Quality Score Boost" Rule (Long-Term Health)**
+    * *Trigger:* Quality Score < 5/10 for keywords spending > 20% of budget.
+    * *Action:* Improve Landing Page speed or ensure keyword appears in H1 tag.
+
 **Output the JSON now:**

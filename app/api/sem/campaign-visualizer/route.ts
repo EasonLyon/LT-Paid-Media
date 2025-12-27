@@ -190,19 +190,30 @@ export async function GET(req: Request) {
     const raw = await readProjectText(projectId, fileName);
     const parsed = JSON.parse(raw) as CampaignPlanPayload | CampaignPlan[];
     const campaigns = normalizeCampaigns(parsed);
+    const optimizationPlaybook = (parsed as CampaignPlanPayload).OptimizationPlaybook;
+
     if (!campaigns.length) {
       throw new Error(`No campaigns found inside ${fileName}`);
     }
 
     const metricsMap = await loadKeywordMetrics(projectId);
     const enrichedCampaigns = enrichCampaigns(campaigns, metricsMap);
-    const target = source === "enriched" ? { fileName } : await writeEnrichedPlan(projectId, enrichedCampaigns);
+    
+    // If we're writing the enriched plan for the first time, include the playbook if it exists
+    let targetFileName = fileName;
+    if (source === "base") {
+       const payload: CampaignPlanPayload = { Campaigns: enrichedCampaigns, OptimizationPlaybook: optimizationPlaybook };
+       const savedPath = await writeProjectJson(projectId, "11", "campaign-plan-enriched.json", payload);
+       targetFileName = path.basename(savedPath);
+    }
+    
     const normalizedInput = await loadNormalizedInput(projectId);
 
     return NextResponse.json({
       projectId,
       campaigns: enrichedCampaigns,
-      fileName: target.fileName,
+      optimizationPlaybook,
+      fileName: targetFileName,
       backupFileName,
       sourceFileName: fileName,
       normalizedInput,
@@ -216,9 +227,10 @@ export async function GET(req: Request) {
 
 export async function PUT(req: Request) {
   try {
-    const { projectId, campaigns, fileName } = (await req.json()) as {
+    const { projectId, campaigns, optimizationPlaybook, fileName } = (await req.json()) as {
       projectId?: string;
       campaigns?: CampaignPlan[];
+      optimizationPlaybook?: any; 
       fileName?: string | null;
     };
 
@@ -230,7 +242,7 @@ export async function PUT(req: Request) {
     }
 
     const safeFileName = fileName && SAFE_NAME.test(fileName) ? fileName : ENRICHED_NAME;
-    const payload: CampaignPlanPayload = { Campaigns: campaigns };
+    const payload: CampaignPlanPayload = { Campaigns: campaigns, OptimizationPlaybook: optimizationPlaybook };
     const content = JSON.stringify(payload, null, 2);
     await writeProjectText(projectId, safeFileName, content, "application/json; charset=utf-8");
 

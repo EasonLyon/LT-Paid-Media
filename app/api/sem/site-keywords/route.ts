@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchKeywordsForSites } from "@/lib/dataforseo/keywords-for-site";
-import { normalizeSiteKeywordRecords } from "@/lib/sem/site-keywords";
+import { normalizeSiteKeywordRecords, isHighQualityKeyword } from "@/lib/sem/site-keywords";
 import {
   readProjectJson,
   readProjectProgress,
@@ -144,7 +144,12 @@ export async function POST(req: Request) {
         throw err;
       }
       const normalized = normalizeSiteKeywordRecords(responses, projectId);
-      const filtered = normalized.filter((rec) => rec.search_volume !== null && rec.search_volume >= 100);
+      const filtered = normalized.filter((rec) => {
+        // Must have decent volume
+        if (rec.search_volume === null || rec.search_volume < 100) return false;
+        // Must be a "high quality" keyword (length, intent, format)
+        return isHighQualityKeyword(rec.keyword);
+      });
       for (const rec of filtered) {
         const key = rec.keyword.trim().toLowerCase();
         if (!recordMap.has(key)) {

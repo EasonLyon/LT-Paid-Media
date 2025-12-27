@@ -114,3 +114,49 @@ export function normalizeSiteKeywordRecords(responses: unknown[], projectId: str
 
   return records;
 }
+
+const NAVIGATIONAL_TERMS = [
+  "login", "log in", "signin", "sign in", "signup", "sign up",
+  "contact", "support", "career", "careers", "job", "jobs",
+  "admin", "account", "help", "password", "portal", "facebook",
+  "instagram", "linkedin", "twitter", "tiktok", "pinterest", "youtube",
+  "reddit", "whatsapp", "indeed", "glassdoor", "monster", "ziprecruiter",
+  "upwork", "fiverr", "yours", "he", "she", "next",
+  "this", "that", "they", "them",
+];
+
+export function isHighQualityKeyword(keyword: string): boolean {
+  const lower = keyword.toLowerCase().trim();
+
+  // 1. Word Count Heuristic: Sweet spot 2-7 words
+  // Split by whitespace
+  const words = lower.split(/\s+/);
+  if (words.length < 2 || words.length > 7) {
+    return false;
+  }
+
+  // 2. Alphanumeric Noise
+  // Reject pure numbers
+  if (/^\d+$/.test(lower)) {
+    return false;
+  }
+  // Reject if contains non-standard characters (allow letters, numbers, spaces, -, &, ')
+  // This regex matches if there is ANY character that is NOT allowed.
+  // Allowed: a-z, 0-9, space, -, &, '
+  if (/[^a-z0-9\s-&']/.test(lower)) {
+    return false;
+  }
+
+  // 3. Navigational Cleanup
+  // Check if any navigational term is present as a distinct word
+  for (const term of NAVIGATIONAL_TERMS) {
+    // Check for exact word match to avoid false positives (e.g., "administer" vs "admin")
+    // \b matches word boundary
+    const regex = new RegExp(`\\b${term}\\b`, "i");
+    if (regex.test(lower)) {
+      return false;
+    }
+  }
+
+  return true;
+}

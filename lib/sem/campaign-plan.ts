@@ -89,7 +89,10 @@ export async function generateCampaignPlan(projectId: string) {
     return { ...campaign, CampaignName: updatedCampaignName, AdGroups: indexedAdGroups };
   });
 
-  const finalPayload: CampaignPlanPayload = { Campaigns: indexedCampaigns };
+  const finalPayload: CampaignPlanPayload = {
+    Campaigns: indexedCampaigns,
+    OptimizationPlaybook: parsed.OptimizationPlaybook,
+  };
   const filePath = await writeProjectJson(projectId, "10", OUTPUT_FILE, finalPayload);
 
   return {

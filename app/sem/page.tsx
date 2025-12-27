@@ -316,6 +316,7 @@ export default function SemPage() {
     step8: true,
     step9: true,
   });
+  const [resetNotification, setResetNotification] = useState<string | null>(null);
 
   const [confirmDialog, setConfirmDialog] = useState<{
     title: string;
@@ -1643,8 +1644,11 @@ export default function SemPage() {
         { method: "DELETE" },
       );
 
-      push("Visualization reset. Opening visualizer now will re-generate from Step 8 output.");
+      const timestamp = new Date().toLocaleTimeString();
+      push(`Visualization reset at ${timestamp}. Opening visualizer now will re-generate from Step 8 output.`);
       updateStepStatus("visualizer", { status: "idle", message: "Reset complete" });
+      setResetNotification(`Reset completed at ${timestamp}`);
+      setTimeout(() => setResetNotification(null), 5000);
       refreshProjectFiles(projectId);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Reset failed";
@@ -2192,6 +2196,11 @@ export default function SemPage() {
                 >
                   Re-do / Reset Chart
                 </button>
+                {resetNotification && (
+                  <span className="text-sm text-green-600 font-medium animate-pulse">
+                    {resetNotification}
+                  </span>
+                )}
                 <span className="text-sm text-gray-700 dark:text-slate-200">
                   Current project: {projectId || "Set a projectId above"} (uses files starting with 10-)
                 </span>

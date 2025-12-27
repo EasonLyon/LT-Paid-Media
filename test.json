@@ -29,7 +29,7 @@
             },
             "CampaignType": {
               "type": "string",
-              "description": "Type of the campaign.",
+              "description": "Type of the campaign. Default to 'Search' for Lead/Service goals under restricted budgets. Use 'PMax' for Local Store Visits (multi-location) or E-com.",
               "enum": [
                 "Search",
                 "PMax",
@@ -97,9 +97,13 @@
               "additionalProperties": false
             },
             "Language": {
-              "type": "string",
-              "description": "Language targeted by the campaign. Can be single or multiple languages separated by comma (e.g. 'English, Malay').",
-              "minLength": 1
+              "type": "array",
+              "description": "List of target languages. Logic: ['en', 'ms'] for Mass Market/Local; ['en'] for Premium/International; ['en', 'zh'] for Chinese Niche.",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
             },
             "Location": {
               "type": "object",
@@ -128,7 +132,8 @@
                         "description": "Radius in km. Use null for direct City/State targeting."
                       }
                     },
-                    "required": ["Name", "RadiusKm"]
+                    "required": ["Name", "RadiusKm"],
+                    "additionalProperties": false
                   }
                 },
                 "Excluded": {
@@ -316,10 +321,67 @@
           ],
           "additionalProperties": false
         }
+      },
+      "OptimizationPlaybook": {
+        "type": "object",
+        "description": "A simple guide for the user on how to manage this campaign after it launches.",
+        "properties": {
+          "Metrics_Benchmarks": {
+            "type": "object",
+            "description": "The financial targets to measure success.",
+            "properties": {
+              "Target_CPL_MYR": { 
+                "type": "number",
+                "description": "The ideal cost you want to pay for one lead (e.g. 50.00)."
+              },
+              "Max_CPL_Ceiling_MYR": { 
+                "type": "number",
+                "description": "The maximum cost you are willing to pay before pausing an ad (e.g. 100.00)."
+              }
+            },
+            "required": ["Target_CPL_MYR", "Max_CPL_Ceiling_MYR"],
+            "additionalProperties": false
+          },
+          "Rules_Of_Engagement": {
+            "type": "array",
+            "description": "A step-by-step checklist of actions to take based on performance.",
+            "minItems": 5,
+            "items": {
+              "type": "object",
+              "properties": {
+                "RuleName": { 
+                  "type": "string",
+                  "description": "A short, simple name for the rule (e.g. 'Stop Wasting Money' or 'Increase Budget')."
+                },
+                "Frequency": { 
+                  "type": "string", 
+                  "description": "When to check this rule. Can be specific (e.g. 'Every Friday', 'Every 3 Days', 'Weekly', 'Bi-Weekly', 'Monthly')." 
+                },
+                "Condition": { 
+                  "type": "string", 
+                  "description": "The specific situation to look for. Use simple logic (e.g. 'CPL < Target_CPL AND ImpressionShare < 80%')." 
+                },
+                "Action": { 
+                  "type": "string", 
+                  "description": "The detailed instruction on what to do, written in simple, plain English." 
+                },
+                "Rationale": { 
+                  "type": "string",
+                  "description": "A simplified explanation of why this action is necessary." 
+                }
+              },
+              "required": ["RuleName", "Frequency", "Condition", "Action", "Rationale"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["Metrics_Benchmarks", "Rules_Of_Engagement"],
+        "additionalProperties": false
       }
     },
     "required": [
-      "Campaigns"
+      "Campaigns",
+      "OptimizationPlaybook"
     ],
     "additionalProperties": false
   }
