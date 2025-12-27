@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { CampaignPlan, CampaignPlanAdGroup, CampaignPlanKeyword, NormalizedProjectInitInput } from "@/types/sem";
+import { CampaignPlan, CampaignPlanAdGroup, CampaignPlanKeyword, NormalizedProjectInitInput, OptimizationPlaybook } from "@/types/sem";
 
-type ViewMode = "hierarchy" | "tables" | "performance";
+type ViewMode = "hierarchy" | "tables" | "performance" | "playbook";
 type SortDirection = "asc" | "desc";
 
 interface CampaignRow {
@@ -16,8 +16,7 @@ interface CampaignRow {
   BudgetDailyMYR: number | null;
   TargetCPAMYR: number | null;
   Language: string;
-  LocationName: string;
-  LocationRadiusKm: number | null;
+  LocationSummary: string;
   AdGroupsCount: number;
 }
 
@@ -270,6 +269,7 @@ function CampaignVisualizerPageContent() {
   const searchParams = useSearchParams();
   const [projectIdInput, setProjectIdInput] = useState<string>("");
   const [campaigns, setCampaigns] = useState<CampaignPlan[]>([]);
+  const [optimizationPlaybook, setOptimizationPlaybook] = useState<OptimizationPlaybook | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("performance");
   const [fileName, setFileName] = useState<string | null>(null);
   const [backupFileName, setBackupFileName] = useState<string | null>(null);
@@ -380,18 +380,23 @@ function CampaignVisualizerPageContent() {
   }, []);
 
   const campaignRows = useMemo<CampaignRow[]>(() => {
-    return campaigns.map((campaign, idx) => ({
-      idx,
-      CampaignName: campaign.CampaignName ?? `Campaign ${idx + 1}`,
-      Goal: campaign.Goal ?? "",
-      CampaignType: campaign.CampaignType ?? "",
-      BudgetDailyMYR: campaign.BudgetDailyMYR ?? null,
-      TargetCPAMYR: campaign.TargetCPAMYR ?? null,
-      Language: campaign.Language ?? "",
-      LocationName: campaign.Location?.Name ?? "",
-      LocationRadiusKm: campaign.Location?.RadiusKm ?? null,
-      AdGroupsCount: Array.isArray(campaign.AdGroups) ? campaign.AdGroups.length : 0,
-    }));
+    return campaigns.map((campaign, idx) => {
+      const included = campaign.Location?.Included?.length ?? 0;
+      const excluded = campaign.Location?.Excluded?.length ?? 0;
+      const summary = `${included} inc, ${excluded} exc`;
+      
+      return {
+        idx,
+        CampaignName: campaign.CampaignName ?? `Campaign ${idx + 1}`,
+        Goal: campaign.Goal ?? "",
+        CampaignType: campaign.CampaignType ?? "",
+        BudgetDailyMYR: campaign.BudgetDailyMYR ?? null,
+        TargetCPAMYR: campaign.TargetCPAMYR ?? null,
+        Language: campaign.Language ?? "",
+        LocationSummary: summary,
+        AdGroupsCount: Array.isArray(campaign.AdGroups) ? campaign.AdGroups.length : 0,
+      };
+    });
   }, [campaigns]);
 
   const adGroupRows = useMemo<AdGroupRow[]>(() => {
@@ -805,6 +810,7 @@ function CampaignVisualizerPageContent() {
       const json = (await res.json()) as {
         projectId?: string;
         campaigns?: CampaignPlan[];
+        optimizationPlaybook?: OptimizationPlaybook;
         fileName?: string;
         backupFileName?: string;
         error?: string;
@@ -822,6 +828,7 @@ function CampaignVisualizerPageContent() {
         }
       }
       setCampaigns(json.campaigns ?? []);
+      setOptimizationPlaybook(json.optimizationPlaybook ?? null);
       setSelectedAdGroup(null);
       setExpandedCampaigns({});
       setFileName(json.fileName ?? null);
@@ -839,6 +846,7 @@ function CampaignVisualizerPageContent() {
       const message = error instanceof Error ? error.message : "Unable to load plan";
       setStatusMessage(message);
       setCampaigns([]);
+      setOptimizationPlaybook(null);
       setNormalizedInput(null);
     } finally {
       setIsLoading(false);
@@ -848,22 +856,6 @@ function CampaignVisualizerPageContent() {
   const updateCampaign = (campaignIdx: number, updates: Partial<CampaignPlan>) => {
     setCampaigns((prev) =>
       prev.map((campaign, idx) => (idx === campaignIdx ? { ...campaign, ...updates } : campaign)),
-    );
-  };
-
-  const updateLocationField = (campaignIdx: number, key: "Name" | "RadiusKm", value: string | number | null) => {
-    setCampaigns((prev) =>
-      prev.map((campaign, idx) =>
-        idx === campaignIdx
-          ? {
-              ...campaign,
-              Location: {
-                Name: key === "Name" ? String(value ?? "") : campaign.Location?.Name ?? "",
-                RadiusKm: key === "RadiusKm" ? (value as number | null) : campaign.Location?.RadiusKm ?? null,
-              },
-            }
-          : campaign,
-      ),
     );
   };
 
@@ -943,7 +935,7 @@ function CampaignVisualizerPageContent() {
       const res = await fetch("/api/sem/campaign-visualizer", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ projectId: projectIdInput, campaigns, fileName }),
+        body: JSON.stringify({ projectId: projectIdInput, campaigns, optimizationPlaybook, fileName }),
       });
       const json = (await res.json()) as { error?: string; fileName?: string };
       if (!res.ok) {
@@ -1098,6 +1090,15 @@ function CampaignVisualizerPageContent() {
               onClick={() => setViewMode("tables")}
             >
               Tables for QA & export
+            </button>
+            <button
+              type="button"
+              className={`px-3 py-1 rounded border ${
+                viewMode === "playbook" ? "bg-blue-600 text-white" : "bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+              }`}
+              onClick={() => setViewMode("playbook")}
+            >
+              Optimization Playbook
             </button>
           </div>
         </section>
@@ -1529,9 +1530,6 @@ function CampaignVisualizerPageContent() {
                             tCPA: {formatCurrency(campaign.BiddingLifecycle?.Phase2_Scale?.TargetCPA_MYR ?? campaign.TargetCPAMYR)}
                           </span>
                           <span className="px-2 py-1 rounded bg-white border dark:border-slate-600 dark:bg-slate-800">Lang: {campaign.Language || "—"}</span>
-                          <span className="px-2 py-1 rounded bg-white border dark:border-slate-600 dark:bg-slate-800">
-                            {campaign.Location?.Name || "No location"} • {campaign.Location?.RadiusKm ?? "—"} km
-                          </span>
                         </div>
                       </summary>
                       <div className="px-4 pb-4 space-y-2">
@@ -1551,7 +1549,7 @@ function CampaignVisualizerPageContent() {
                         >
                           Campaign Settings
                           <div className="text-xs text-gray-500 font-normal mt-1">
-                            Bidding Strategy • Ad Schedule • Negative Keywords
+                            Location • Bidding Strategy • Ad Schedule • Negative Keywords
                           </div>
                         </button>
                         <div className="grid md:grid-cols-2 gap-2">
@@ -1760,8 +1758,7 @@ function CampaignVisualizerPageContent() {
                           "BudgetDailyMYR",
                           "TargetCPAMYR",
                           "Language",
-                          "LocationName",
-                          "LocationRadiusKm",
+                          "LocationSummary",
                           "AdGroupsCount",
                         ] satisfies Array<keyof CampaignRow>
                       ).map((column) => (
@@ -1817,18 +1814,8 @@ function CampaignVisualizerPageContent() {
                             onChange={(val) => updateCampaign(row.idx, { Language: String(val ?? "") })}
                           />
                         </td>
-                        <td className="px-2 py-1">
-                          <EditableCell
-                            value={row.LocationName}
-                            onChange={(val) => updateLocationField(row.idx, "Name", String(val ?? ""))}
-                          />
-                        </td>
-                        <td className="px-2 py-1">
-                          <EditableCell
-                            value={row.LocationRadiusKm}
-                            type="number"
-                            onChange={(val) => updateLocationField(row.idx, "RadiusKm", val as number | null)}
-                          />
+                        <td className="px-2 py-1 text-gray-600">
+                          {row.LocationSummary}
                         </td>
                         <td className="px-2 py-1 text-center">{row.AdGroupsCount}</td>
                       </tr>
@@ -1991,14 +1978,163 @@ function CampaignVisualizerPageContent() {
           </tfoot>
         </table>
       </div>
-    </TableCard>
-  </section>
-)}
-      </div>
-    </main>
-  );
-}
+                </TableCard>
+              </section>
+            )}
+    
+            {viewMode === "playbook" && (
+              <section className="space-y-6">
+                <div className="flex flex-col gap-2">
+                  <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Optimization Playbook</h2>
+                  <p className="text-sm text-gray-600 dark:text-slate-300">
+                    Your generated manual for managing these campaigns after launch.
+                  </p>
+                </div>
+    
+                {!optimizationPlaybook ? (
+                  <div className="bg-white border rounded-lg p-8 text-center text-gray-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                    <p>No optimization playbook found in the project data.</p>
+                    <p className="text-sm mt-2">Make sure you have run the latest pipeline step that generates this data.</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Financial North Star Scorecard */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="bg-white border-l-4 border-l-blue-500 rounded-lg p-6 shadow-sm dark:bg-slate-900 dark:border-slate-700">
+                        <div className="text-sm font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wide">
+                          Target Cost Per Lead
+                        </div>
+                        <div className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">
+                          {formatCurrency(optimizationPlaybook.Metrics_Benchmarks.Target_CPL_MYR)}
+                        </div>
+                        <div className="mt-1 text-sm text-gray-600 dark:text-slate-400">
+                          Ideal average cost. Maintain this for profitability.
+                        </div>
+                      </div>
+    
+                      <div className="bg-white border-l-4 border-l-red-500 rounded-lg p-6 shadow-sm dark:bg-slate-900 dark:border-slate-700">
+                        <div className="text-sm font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wide">
+                          Max CPL Ceiling
+                        </div>
+                        <div className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">
+                          {formatCurrency(optimizationPlaybook.Metrics_Benchmarks.Max_CPL_Ceiling_MYR)}
+                        </div>
+                        <div className="mt-1 text-sm text-gray-600 dark:text-slate-400">
+                          The "Danger Zone". Pause ads or intervene if cost exceeds this.
+                        </div>
+                      </div>
+                    </div>
+    
+                    {/* Rules of Engagement Grid */}
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-medium text-slate-900 dark:text-white">Rules of Engagement</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {optimizationPlaybook.Rules_Of_Engagement.map((rule, idx) => (
+                          <div
+                            key={idx}
+                            className="bg-white border rounded-xl overflow-hidden shadow-sm flex flex-col hover:shadow-md transition-shadow dark:bg-slate-900 dark:border-slate-700"
+                          >
+                            <div className="p-5 border-b bg-gray-50 dark:bg-slate-800 dark:border-slate-700">
+                              <div className="flex justify-between items-start gap-2">
+                                <h4 className="font-bold text-slate-900 dark:text-white text-lg leading-tight">
+                                  {rule.RuleName}
+                                </h4>
+                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200 whitespace-nowrap">
+                                  {rule.Frequency}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="p-5 flex-1 flex flex-col gap-4">
+                              <div>
+                                <div className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-1">
+                                  IF (Condition)
+                                </div>
+                                <div className="text-sm text-slate-800 dark:text-slate-200 font-medium bg-amber-50 dark:bg-amber-900/20 p-2 rounded border border-amber-100 dark:border-amber-900/30">
+                                  {rule.Condition}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-1">
+                                  THEN (Action)
+                                </div>
+                                <div className="text-sm text-slate-800 dark:text-slate-200">
+                                  {rule.Action}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="p-4 bg-gray-50 text-xs text-gray-600 border-t dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700">
+                              <span className="font-semibold">Why:</span> {rule.Rationale}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </section>
+            )}
 
+        <section className="bg-white border rounded-lg p-6 space-y-4 dark:border-slate-700 dark:bg-slate-900">
+          <div className="flex items-center gap-2">
+            <div className="p-2 bg-blue-100 text-blue-700 rounded-lg dark:bg-blue-900/30 dark:text-blue-300">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            </div>
+            <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Tracking Setup Guide</h2>
+          </div>
+          
+          <div className="prose prose-sm max-w-none text-gray-600 dark:text-slate-300">
+            <p>
+              To ensure accurate attribution in Google Analytics and other tools, we recommend setting up a <strong>Final URL Suffix</strong> at the account level. This automatically appends tracking parameters to all your ads.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6 mt-4">
+            <div className="space-y-3">
+              <h3 className="font-medium text-slate-900 dark:text-white flex items-center gap-2">
+                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-xs font-bold dark:bg-slate-800 dark:text-slate-400">1</span>
+                Step-by-Step Configuration
+              </h3>
+              <ol className="list-decimal list-inside space-y-2 text-sm text-gray-600 ml-2 dark:text-slate-300">
+                <li>Log in to your <strong>Google Ads account</strong>.</li>
+                <li>In the left-hand menu, click on <strong>Admin</strong> (the gear icon <span className="inline-block align-middle"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></span>). <br/><span className="text-xs text-gray-500 italic ml-4">Note: In some older views, this might be under &quot;Settings&quot; &gt; &quot;Account Settings&quot;.</span></li>
+                <li>Click on <strong>Account settings</strong>.</li>
+                <li>Scroll down and click to expand the <strong>Tracking</strong> section.</li>
+                <li>Find the field labeled <strong>Final URL suffix</strong>.</li>
+                <li>Paste the &quot;Golden Standard&quot; string (on the right) into that box.</li>
+                <li>Click <strong>Save</strong>.</li>
+              </ol>
+            </div>
+
+            <div className="space-y-3">
+              <h3 className="font-medium text-slate-900 dark:text-white flex items-center gap-2">
+                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-xs font-bold dark:bg-slate-800 dark:text-slate-400">2</span>
+                The String to Paste
+              </h3>
+              <div className="bg-slate-800 rounded-lg p-4 text-slate-200 text-sm font-mono break-all relative group">
+                utm_source=google&utm_medium=cpc&utm_campaign={'{campaignid}'}&utm_content={'{adgroupid}'}&utm_term={'{keyword}'}
+                <button
+                  onClick={() => void copyName("utm_source=google&utm_medium=cpc&utm_campaign={campaignid}&utm_content={adgroupid}&utm_term={keyword}", "tracking-string")}
+                  className="absolute top-2 right-2 p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Copy to clipboard"
+                >
+                  {copiedName === "tracking-string" ? (
+                    <CheckIcon className="w-4 h-4 text-green-400" />
+                  ) : (
+                    <ClipboardIcon className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-slate-400">
+                This string dynamically populates the campaign ID, ad group ID, and keyword that triggered the ad.
+              </p>
+            </div>
+          </div>
+        </section>
+
+          </div>
+        </main>
+      );
+    }
 function TableCard({ title, children, note, onExport }: { title: string; children: ReactNode; note?: string; onExport?: () => void }) {
   return (
     <div className="border rounded-lg p-3 space-y-2">
@@ -2085,6 +2221,51 @@ function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; 
         <button className="border rounded px-3 py-1 text-sm" onClick={onClose}>
           Close
         </button>
+      </div>
+
+      <div className="space-y-3">
+        <div className="font-medium border-b pb-1">Location Targeting</div>
+        <div className="text-sm space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-gray-500">Method:</span>
+            <span className="font-medium px-2 py-0.5 rounded bg-purple-50 text-purple-800 dark:bg-purple-900/30 dark:text-purple-200">
+              {campaign.Location?.TargetingMethod || "—"}
+            </span>
+          </div>
+          
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="border rounded bg-gray-50 p-2 dark:bg-slate-800 dark:border-slate-700">
+              <div className="text-xs font-semibold text-gray-500 mb-2">Included ({campaign.Location?.Included?.length ?? 0})</div>
+              {campaign.Location?.Included?.length ? (
+                <ul className="list-disc list-inside space-y-1 text-gray-700 dark:text-slate-200">
+                  {campaign.Location.Included.map((loc, i) => (
+                    <li key={i}>
+                      {loc.Name}
+                      {typeof loc.RadiusKm === "number" && (
+                        <span className="text-gray-500 ml-1">({loc.RadiusKm} km)</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-gray-400 italic">None</div>
+              )}
+            </div>
+            
+            <div className="border rounded bg-red-50 p-2 dark:bg-red-900/10 dark:border-red-900/30">
+              <div className="text-xs font-semibold text-red-700 mb-2 dark:text-red-300">Excluded ({campaign.Location?.Excluded?.length ?? 0})</div>
+              {campaign.Location?.Excluded?.length ? (
+                <ul className="list-disc list-inside space-y-1 text-red-800 dark:text-red-200">
+                  {campaign.Location.Excluded.map((loc, i) => (
+                    <li key={i}>{loc}</li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-red-400 italic">None</div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="space-y-3">
