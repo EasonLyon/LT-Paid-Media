@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 
 const PROMPT_ID = "pmpt_6950f12ae6048195b6c6d542c6a9c04c0ad9f956d2ea8332";
-const PROMPT_VERSION = "4";
+const PROMPT_VERSION = "5";
 
 function getOpenAIClient() {
   if (!process.env.OPENAI_API_KEY) {
