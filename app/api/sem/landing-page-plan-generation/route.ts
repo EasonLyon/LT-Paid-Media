@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateLandingPagePlan } from "@/lib/sem/landing-page-plan-generation";
 
-export const maxDuration = 900; // 15 minutes
+export const maxDuration = 300; // 5 minutes
 
 export async function POST(req: Request) {
   try {
