@@ -10,26 +10,39 @@ function getOpenAIClient() {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
-function extractText(response: any): string {
-    if (response.output_text) return response.output_text;
-    
-    const outputs = response.output ?? response.outputs ?? [];
+function extractText(response: unknown): string {
+  if (typeof response === "string") return response;
+  if (!response || typeof response !== "object") {
+    throw new Error("Unable to extract text from OpenAI response");
+  }
+
+  const record = response as Record<string, unknown>;
+  if (typeof record.output_text === "string") return record.output_text;
+
+  const outputs = (record.output ?? record.outputs) as unknown;
+  if (Array.isArray(outputs)) {
     for (const output of outputs) {
-      const content = output?.content ?? [];
-      for (const c of content) {
-        if (typeof c?.text === "string") {
-          return c.text;
-        }
+      if (!output || typeof output !== "object") continue;
+      const content = (output as Record<string, unknown>).content;
+      if (!Array.isArray(content)) continue;
+      for (const entry of content) {
+        if (!entry || typeof entry !== "object") continue;
+        const text = (entry as Record<string, unknown>).text;
+        if (typeof text === "string") return text;
       }
     }
+  }
 
-    if (typeof response === "string") return response;
-    
-    if (response.choices && response.choices[0]?.message?.content) {
-        return response.choices[0].message.content;
+  const choices = record.choices;
+  if (Array.isArray(choices) && choices[0] && typeof choices[0] === "object") {
+    const message = (choices[0] as Record<string, unknown>).message;
+    if (message && typeof message === "object") {
+      const content = (message as Record<string, unknown>).content;
+      if (typeof content === "string") return content;
     }
+  }
 
-    throw new Error("Unable to extract text from OpenAI response");
+  throw new Error("Unable to extract text from OpenAI response");
 }
 
 export interface LandingPagePlanVariables {
@@ -46,7 +59,6 @@ export async function fetchLandingPagePlan(variables: LandingPagePlanVariables):
   const client = getOpenAIClient();
   console.log("[Step 10.2] Calling OpenAI with prompt", PROMPT_ID);
   
-  // @ts-ignore: Assuming the custom responses API exists on the client as per project pattern
   const response = await client.responses.create({
     prompt: {
       "id": PROMPT_ID,

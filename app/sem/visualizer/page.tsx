@@ -513,7 +513,7 @@ function CampaignVisualizerPageContent() {
       const next = monthlySpendOverride ?? Math.max(baseMonthlySpendTotal, monthlySpendSliderMin);
       return next ? Math.round(next).toString() : "";
     });
-  }, [baseMonthlySpendTotal, monthlySpendSliderMax, monthlySpendSliderMin]);
+  }, [baseMonthlySpendTotal, monthlySpendOverride, monthlySpendSliderMax, monthlySpendSliderMin]);
 
   const clampMonthlySpend = (value: number) =>
     Math.min(Math.max(monthlySpendSliderMin, value), monthlySpendSliderMax);
@@ -1558,8 +1558,6 @@ function CampaignVisualizerPageContent() {
                           {(campaign.AdGroups ?? []).map((group, adGroupIdx) => {
                             const targeting = group.Targeting;
                             const keywords = keywordList(targeting, false);
-                            const negatives = keywordList(targeting, true);
-                            const ads = Array.isArray(group.ResponsiveSearchAds) ? group.ResponsiveSearchAds : [];
                             return (
                               <button
                                 key={adGroupIdx}
@@ -2022,7 +2020,7 @@ function CampaignVisualizerPageContent() {
                           {formatCurrency(optimizationPlaybook.Metrics_Benchmarks.Max_CPL_Ceiling_MYR)}
                         </div>
                         <div className="mt-1 text-sm text-gray-600 dark:text-slate-400">
-                          The "Danger Zone". Pause ads or intervene if cost exceeds this.
+                          The &quot;Danger Zone&quot;. Pause ads or intervene if cost exceeds this.
                         </div>
                       </div>
                     </div>
@@ -2177,15 +2175,18 @@ function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; 
     }
   };
 
-  const dayMap: Record<string, number> = {
-    Monday: 0,
-    Tuesday: 1,
-    Wednesday: 2,
-    Thursday: 3,
-    Friday: 4,
-    Saturday: 5,
-    Sunday: 6,
-  };
+  const dayMap = useMemo<Record<string, number>>(
+    () => ({
+      Monday: 0,
+      Tuesday: 1,
+      Wednesday: 2,
+      Thursday: 3,
+      Friday: 4,
+      Saturday: 5,
+      Sunday: 6,
+    }),
+    [],
+  );
   const hours = Array.from({ length: 24 }, (_, i) => i);
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -2212,7 +2213,7 @@ function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; 
       }
     });
     return grid;
-  }, [AdSchedule]);
+  }, [AdSchedule, dayMap]);
 
   return (
     <div className="space-y-4">

@@ -115,7 +115,7 @@ export async function buildCampaignStructure(projectId: string, options: BuildCa
   const csv = rowsToCsv(rows);
   const stats = calculateStats(rows);
 
-  const filePath = await writeProjectText(projectId, OUTPUT_FILE, csv, "text/csv; charset=utf-8");
+  await writeProjectText(projectId, OUTPUT_FILE, csv, "text/csv; charset=utf-8");
 
   return {
     rows,

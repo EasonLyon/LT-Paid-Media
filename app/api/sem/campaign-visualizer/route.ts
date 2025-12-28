@@ -5,6 +5,7 @@ import {
   CampaignPlanKeyword,
   CampaignPlanPayload,
   NormalizedProjectInitInput,
+  OptimizationPlaybook,
   ScoredKeywordRecord,
 } from "@/types/sem";
 import {
@@ -162,12 +163,6 @@ function enrichCampaigns(campaigns: CampaignPlan[], metricsMap: Map<string, Scor
   }));
 }
 
-async function writeEnrichedPlan(projectId: string, campaigns: CampaignPlan[]): Promise<{ fileName: string }> {
-  const payload: CampaignPlanPayload = { Campaigns: campaigns };
-  const savedPath = await writeProjectJson(projectId, "11", "campaign-plan-enriched.json", payload);
-  return { fileName: path.basename(savedPath) };
-}
-
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   let projectId = searchParams.get("projectId");
@@ -230,7 +225,7 @@ export async function PUT(req: Request) {
     const { projectId, campaigns, optimizationPlaybook, fileName } = (await req.json()) as {
       projectId?: string;
       campaigns?: CampaignPlan[];
-      optimizationPlaybook?: any; 
+      optimizationPlaybook?: OptimizationPlaybook | null;
       fileName?: string | null;
     };
 
@@ -242,7 +237,10 @@ export async function PUT(req: Request) {
     }
 
     const safeFileName = fileName && SAFE_NAME.test(fileName) ? fileName : ENRICHED_NAME;
-    const payload: CampaignPlanPayload = { Campaigns: campaigns, OptimizationPlaybook: optimizationPlaybook };
+    const payload: CampaignPlanPayload = {
+      Campaigns: campaigns,
+      OptimizationPlaybook: optimizationPlaybook ?? undefined,
+    };
     const content = JSON.stringify(payload, null, 2);
     await writeProjectText(projectId, safeFileName, content, "application/json; charset=utf-8");
 

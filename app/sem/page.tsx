@@ -2472,7 +2472,7 @@ export default function SemPage() {
                                setLandingPagePlanResult({ ...landingPagePlanResult, content: editedPlanContent });
                                setIsEditingPlan(false);
                                push("Updated landing page plan");
-                             } catch (err) {
+                             } catch {
                                alert("Failed to save changes");
                              } finally {
                                setIsBusy(false);

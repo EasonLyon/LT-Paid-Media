@@ -14,12 +14,7 @@ export async function generateLandingPagePlan(projectId: string) {
   try {
     inputData = await readProjectJson<LandingPagePlanInput>(projectId, `${INPUT_INDEX}-${INPUT_FILE}`);
   } catch (error) {
-       try {
-          inputData = await readProjectJson<LandingPagePlanInput>(projectId, `${INPUT_INDEX}-${INPUT_FILE}`);
-       } catch (innerError) {
-           throw new Error(`Failed to read input file for Step 10.2: ${(error as Error).message}`);
-       }
-       throw error;
+    throw new Error(`Failed to read input file for Step 10.2: ${(error as Error).message}`);
   }
 
   // 2. Prepare Variables
