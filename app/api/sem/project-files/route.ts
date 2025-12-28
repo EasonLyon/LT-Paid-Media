@@ -27,6 +27,7 @@ export async function GET(req: Request) {
   const file = searchParams.get("file");
   const mode = searchParams.get("mode") ?? "json";
   const includeAll = searchParams.get("include") === "all" || searchParams.get("include") === "any";
+  const returnDetails = searchParams.get("details") === "true";
   const extensionFilters = parseExtensions(searchParams.get("extensions"));
 
   if (!projectId) {
@@ -38,13 +39,18 @@ export async function GET(req: Request) {
   if (!file) {
     try {
       const summaries = await listProjectFileSummaries(projectId);
-      const files = summaries
+      const filtered = summaries
         .filter((entry) => {
           if (includeAll) return true;
           const allowed = extensionFilters.length > 0 ? extensionFilters : DEFAULT_EXTENSIONS;
           return allowed.some((ext) => entry.name.toLowerCase().endsWith(ext));
-        })
-        .map((entry) => entry.name);
+        });
+
+      if (returnDetails) {
+        return NextResponse.json({ files: filtered }, { headers });
+      }
+
+      const files = filtered.map((entry) => entry.name);
       return NextResponse.json({ files: files.sort() }, { headers });
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;

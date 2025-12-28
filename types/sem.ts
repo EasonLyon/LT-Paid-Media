@@ -232,6 +232,20 @@ export interface DataForSeoSearchVolumeTask {
   };
 }
 
+export interface LandingPageInputKeyword {
+  Keyword: string;
+  MatchType: string;
+}
+
+export interface LandingPagePlanInput {
+  website: string;
+  goal: string;
+  context: string;
+  location: string[];
+  keywords_data: LandingPageInputKeyword[];
+  people_also_ask: string[];
+}
+
 export interface CampaignPlanKeyword {
   Keyword: string;
   MatchType: string;

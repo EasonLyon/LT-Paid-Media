@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from 'react-markdown';
 import { CampaignPlan, CampaignStructureRow, CampaignStructureStats, NormalizedProjectInitInput, ProjectInitInput, Tier } from "@/types/sem";
 
 type StepResponse = Record<string, unknown>;
@@ -39,8 +40,9 @@ type StepKey =
   | "score"
   | "campaign"
   | "campaignPlan"
-  | "visualizer";
-type CollapsibleKey = "project" | "step1" | "runSteps" | "step7" | "step8" | "step9";
+  | "visualizer"
+  | "landingPageInput";
+type CollapsibleKey = "project" | "step1" | "runSteps" | "step7" | "step8" | "step9" | "step10";
 
 interface StepStatus {
   status: "idle" | "running" | "success" | "error";
@@ -257,6 +259,7 @@ export default function SemPage() {
   const [isFetchingProjects, setIsFetchingProjects] = useState(false);
   const [projectListError, setProjectListError] = useState<string | null>(null);
   const [availableFiles, setAvailableFiles] = useState<string[]>([]);
+  const [fileDetails, setFileDetails] = useState<Record<string, { modifiedMs: number; size: number }>>({});
   const [isFetchingFiles, setIsFetchingFiles] = useState(false);
   const [fileListError, setFileListError] = useState<string | null>(null);
   const [fileFilter, setFileFilter] = useState<string>("");
@@ -284,6 +287,7 @@ export default function SemPage() {
     campaign: { status: "idle" },
     campaignPlan: { status: "idle" },
     visualizer: { status: "idle" },
+    landingPageInput: { status: "idle" },
   });
 
   const [startForm, setStartForm] = useState<StartFormState>({ ...DEFAULT_START_FORM });
@@ -315,8 +319,19 @@ export default function SemPage() {
     step7: true,
     step8: true,
     step9: true,
+    step10: true,
   });
   const [resetNotification, setResetNotification] = useState<string | null>(null);
+  const [landingPageContext, setLandingPageContext] = useState<string>("");
+  const [landingPageGeneratedAt, setLandingPageGeneratedAt] = useState<string | null>(null);
+  
+  // Step 10.2 States
+  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
+  const [planGenerationTime, setPlanGenerationTime] = useState(0); // seconds
+  const [landingPagePlanResult, setLandingPagePlanResult] = useState<{ fileName: string; content: string; generatedAt: string } | null>(null);
+  const [showPlanModal, setShowPlanModal] = useState(false);
+  const [isEditingPlan, setIsEditingPlan] = useState(false);
+  const [editedPlanContent, setEditedPlanContent] = useState("");
 
   const [confirmDialog, setConfirmDialog] = useState<{
     title: string;
@@ -337,6 +352,7 @@ export default function SemPage() {
       score: availableFiles.some((file) => file.startsWith("08-")),
       campaign: availableFiles.some((file) => file.startsWith("09-")),
       campaignPlan: availableFiles.some((file) => file.startsWith("10-") || file.startsWith("11-")),
+      landingPageInput: availableFiles.some((file) => file.startsWith("12_1-")),
     }),
     [availableFiles],
   );
@@ -461,12 +477,45 @@ export default function SemPage() {
     void refreshExistingProjects();
   }, [refreshExistingProjects]);
 
+  // Timer effect for Step 10.2
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isGeneratingPlan) {
+      interval = setInterval(() => {
+        setPlanGenerationTime((prev) => prev + 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isGeneratingPlan]);
+
   useEffect(() => {
     return () => {
       stopStep1Timer();
       stopStep8Timer();
     };
   }, []);
+
+  // Effect to auto-load landing page plan if exists
+  useEffect(() => {
+    const planFile = "12_2-landing-page-plan.txt";
+    if (projectId && availableFiles.includes(planFile) && !landingPagePlanResult) {
+      // Fetch content
+      fetch(`/api/sem/project-files?projectId=${encodeURIComponent(projectId)}&file=${encodeURIComponent(planFile)}&mode=text`, { cache: "no-store" })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.content) {
+             const modified = fileDetails[planFile]?.modifiedMs || Date.now();
+             const generatedAt = new Date(modified).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+             setLandingPagePlanResult({
+               fileName: planFile,
+               content: data.content,
+               generatedAt
+             });
+          }
+        })
+        .catch((err) => console.warn("Failed to autoload plan:", err));
+    }
+  }, [projectId, availableFiles, landingPagePlanResult, fileDetails]);
 
   const persistProjectId = (value: string) => {
     try {
@@ -488,20 +537,27 @@ export default function SemPage() {
     setIsFetchingFiles(true);
     setFileListError(null);
     try {
-      const res = await fetch(`/api/sem/project-files?projectId=${encodeURIComponent(pid)}&include=all`, {
+      const res = await fetch(`/api/sem/project-files?projectId=${encodeURIComponent(pid)}&include=all&details=true`, {
         cache: "no-store",
       });
-      const json = (await res.json()) as { files?: string[]; error?: string };
+      const json = (await res.json()) as { files?: { name: string; modifiedMs: number; size: number }[]; error?: string };
       if (!res.ok || json.error) {
         const message = json.error ?? res.statusText;
         throw new Error(message);
       }
       const files = json.files ?? [];
-      setAvailableFiles(files);
+      const names = files.map((f) => f.name);
+      setAvailableFiles(names);
+      const detailsMap: Record<string, { modifiedMs: number; size: number }> = {};
+      files.forEach((f) => {
+        detailsMap[f.name] = { modifiedMs: f.modifiedMs, size: f.size };
+      });
+      setFileDetails(detailsMap);
+
       setSelectedFilesForDownload((prev) => {
         const next = new Set<string>();
         for (const name of prev) {
-          if (files.includes(name)) next.add(name);
+          if (names.includes(name)) next.add(name);
         }
         return next;
       });
@@ -756,6 +812,7 @@ export default function SemPage() {
       markComplete("score", "Keyword scores ready");
       markComplete("campaign", "Campaign CSV ready");
       markComplete("campaignPlan", "Plan ready for QA");
+      markComplete("landingPageInput", "Input JSON ready");
 
       const visualizerStatus: StepStatus = stepCompletion.campaignPlan
         ? { status: "success", message: "10/11 plan ready" }
@@ -980,6 +1037,8 @@ export default function SemPage() {
         return "campaign";
       case "campaign-plan":
         return "campaignPlan";
+      case "landing-page-plan-input":
+        return "landingPageInput";
       default:
         return "start";
     }
@@ -1619,6 +1678,87 @@ export default function SemPage() {
     await runCampaignPlanStep();
   };
 
+  const runLandingPageInputStep = async (options?: { manageBusy?: boolean }) => {
+    const manageBusy = options?.manageBusy ?? true;
+    if (!projectId) {
+      push("Provide projectId first");
+      return false;
+    }
+    if (manageBusy) setIsBusy(true);
+    updateStepStatus("landingPageInput", { status: "running", message: "Generating input JSON" });
+    push("Step 10.1 – Generating Landing Page Plan Input");
+    let completed = false;
+    try {
+      const res = await fetch("/api/sem/landing-page-plan-input", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId, additionalContext: landingPageContext }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || res.statusText);
+      
+      push(`Step 10.1 success: Saved to ${json.fileName}`);
+      updateStepStatus("landingPageInput", { status: "success", message: "Input JSON ready" });
+      setLandingPageGeneratedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }));
+      refreshProjectFiles(projectId);
+      completed = true;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      push(`Step 10.1 failed: ${message}`);
+      updateStepStatus("landingPageInput", { status: "error", message });
+    } finally {
+      if (manageBusy) setIsBusy(false);
+    }
+    return completed;
+  };
+
+  const runLandingPagePlanGeneration = async () => {
+    if (!projectId) return;
+    try {
+      setIsGeneratingPlan(true);
+      setPlanGenerationTime(0);
+      updateStepStatus("landingPageInput", { status: "running", message: "Generating plan with OpenAI..." }); // Re-using existing status key or should I add a new one? 
+      // User asked for "Step 10 – Landing Page Plan" which corresponds to "landingPageInput" key in my previous mapping?
+      // Actually step 10 has two parts now. 
+      // The status key "landingPageInput" was used for 10.1.
+      // I should probably use a new key or just reuse it to show progress.
+      // Let's check stepStatuses definition.
+      // It has `landingPageInput`. I'll use that for now, or maybe I should have added `landingPagePlan` key.
+      // The UI I added uses `stepCompletion.landingPageInput` to show the section.
+      // The button I added is inside the section.
+      
+      // Let's stick to using `landingPageInput` status for general status or just local state.
+      // The button shows `isGeneratingPlan` state.
+      // I'll update the status message at least.
+      
+      const res = await fetch("/api/sem/landing-page-plan-generation", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed");
+
+      const generatedAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+      
+      setLandingPagePlanResult({
+        fileName: json.fileName,
+        content: json.content,
+        generatedAt
+      });
+      
+      push(`Step 10.2 success: Saved to ${json.fileName}`);
+      // updateStepStatus("landingPageInput", { status: "success", message: "Plan Generated" });
+      refreshProjectFiles(projectId);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      push(`Error Step 10.2: ${msg}`);
+      // updateStepStatus("landingPageInput", { status: "error", message: msg });
+    } finally {
+      setIsGeneratingPlan(false);
+    }
+  };
+
   const handleRedoVisualization = async () => {
     if (!projectId) return;
     const confirmReset = await askConfirm(
@@ -2217,6 +2357,180 @@ export default function SemPage() {
                 </div>
               )}
             </CollapsibleSection>
+
+            <CollapsibleSection
+              title="Step 10 – Landing Page Plan"
+              isOpen={openSections.step10}
+              onToggle={() => toggleSection("step10")}
+            >
+              <p className="text-sm text-gray-600">
+                Generate the input JSON (12_1-...) containing website, goal, context, keywords, and locations, which will be used for the landing page generation process.
+              </p>
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-200">
+                  Additional Context (optional)
+                </label>
+                <textarea
+                  className="w-full border rounded px-3 py-2 text-sm bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 min-h-[80px]"
+                  placeholder="Add any specific instructions or new details for the landing page plan here..."
+                  value={landingPageContext}
+                  onChange={(e) => setLandingPageContext(e.target.value)}
+                />
+                <p className="text-xs text-gray-500 italic">
+                  Description: Anything important (pricing range, constraints, differentiators, target persona, compliance notes, operating hours, service process, design preference, copywriting tone, etc.).
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
+                  disabled={isBusy || !projectId}
+                  onClick={() => runLandingPageInputStep()}
+                >
+                  {stepStatuses.landingPageInput.status === "running" ? "Working..." : "Generate Input JSON"}
+                </button>
+                {stepCompletion.landingPageInput && (
+                  <span className="text-sm text-green-700 font-medium">
+                    Input JSON generated! {landingPageGeneratedAt && `(at ${landingPageGeneratedAt})`}
+                  </span>
+                )}
+              </div>
+
+              {/* Step 10.2: Generate Plan */}
+              {stepCompletion.landingPageInput && (
+                <div className="mt-6 pt-4 border-t dark:border-slate-700">
+                  <h4 className="text-sm font-semibold mb-3">10.2 Generate Landing Page Plan (OpenAI)</h4>
+                  <div className="flex flex-wrap items-center gap-4">
+                    <button
+                      onClick={runLandingPagePlanGeneration}
+                      disabled={isGeneratingPlan}
+                      className="px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {isGeneratingPlan ? "Generating..." : "Generate Landing Page Plan"}
+                    </button>
+                    
+                    {isGeneratingPlan && (
+                      <span className="text-sm text-gray-600 animate-pulse">
+                        Time elapsed: {Math.floor(planGenerationTime / 60)}m {planGenerationTime % 60}s (est. ~9 mins)
+                      </span>
+                    )}
+
+                    {landingPagePlanResult && !isGeneratingPlan && (
+                      <div className="flex items-center gap-3">
+                         <span className="text-sm text-green-700 font-medium">
+                          Plan completed at {landingPagePlanResult.generatedAt}
+                        </span>
+                        <button
+                          onClick={() => setShowPlanModal(true)}
+                          className="px-3 py-1.5 border border-gray-300 rounded text-sm hover:bg-gray-50 dark:border-slate-600 dark:hover:bg-slate-700"
+                        >
+                          View Plan
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </CollapsibleSection>
+
+        {/* Modal for Viewing Plan */}
+        {showPlanModal && landingPagePlanResult && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+            <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-4xl h-[85vh] flex flex-col">
+              <div className="flex justify-between items-center p-4 border-b dark:border-slate-700">
+                <h3 className="font-bold text-lg">
+                  Landing Page Plan ({landingPagePlanResult.fileName})
+                  {isEditingPlan && <span className="text-sm font-normal text-yellow-600 ml-2">(Editing)</span>}
+                </h3>
+                <div className="flex items-center gap-2">
+                   {!isEditingPlan ? (
+                      <button 
+                        onClick={() => {
+                          setEditedPlanContent(landingPagePlanResult.content);
+                          setIsEditingPlan(true);
+                        }}
+                        className="text-sm px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-100"
+                      >
+                        Edit
+                      </button>
+                   ) : (
+                      <>
+                        <button 
+                          onClick={async () => {
+                             try {
+                               setIsBusy(true); // Reuse main busy state or add local one? Main is fine for modal blocking
+                               // Call save API (reuse project-files PUT)
+                               const res = await fetch(
+                                 `/api/sem/project-files?projectId=${encodeURIComponent(projectId)}&file=${encodeURIComponent(landingPagePlanResult.fileName)}`,
+                                 {
+                                   method: "PUT",
+                                   headers: { "content-type": "application/json" },
+                                   body: JSON.stringify({ content: editedPlanContent }),
+                                 },
+                               );
+                               if (!res.ok) throw new Error("Failed to save");
+                               
+                               setLandingPagePlanResult({ ...landingPagePlanResult, content: editedPlanContent });
+                               setIsEditingPlan(false);
+                               push("Updated landing page plan");
+                             } catch (err) {
+                               alert("Failed to save changes");
+                             } finally {
+                               setIsBusy(false);
+                             }
+                          }}
+                          className="text-sm px-3 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200 dark:bg-green-900 dark:text-green-100"
+                        >
+                          Save
+                        </button>
+                         <button 
+                          onClick={() => setIsEditingPlan(false)}
+                          className="text-sm px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 dark:bg-slate-700 dark:text-gray-300"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                   )}
+                  <button 
+                    onClick={() => setShowPlanModal(false)}
+                    className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 ml-2"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-auto p-4 bg-gray-50 dark:bg-slate-900">
+                {isEditingPlan ? (
+                  <textarea
+                    className="w-full h-full p-4 font-mono text-sm bg-white dark:bg-slate-800 dark:text-slate-200 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                    value={editedPlanContent}
+                    onChange={(e) => setEditedPlanContent(e.target.value)}
+                  />
+                ) : (
+                   <div className="prose prose-sm max-w-none dark:prose-invert">
+                     <ReactMarkdown>{landingPagePlanResult.content}</ReactMarkdown>
+                   </div>
+                )}
+              </div>
+              <div className="p-4 border-t dark:border-slate-700 flex justify-end gap-3">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(isEditingPlan ? editedPlanContent : landingPagePlanResult.content);
+                    alert("Copied to clipboard!");
+                  }}
+                  className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                >
+                  Copy to Clipboard
+                </button>
+                <button
+                  onClick={() => setShowPlanModal(false)}
+                  className="px-4 py-2 bg-gray-200 text-gray-800 text-sm rounded hover:bg-gray-300 dark:bg-slate-700 dark:text-white dark:hover:bg-slate-600"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
           </div>
 
           <div className="flex-1 min-w-0 flex flex-col gap-4 md:h-[80vh] md:basis-1/2">
@@ -2275,6 +2589,7 @@ export default function SemPage() {
                   { key: "campaign", label: "Step 7 – Campaign Structure" },
                   { key: "campaignPlan", label: "Step 8 – Campaign Plan" },
                   { key: "visualizer", label: "Step 9 – Visualize & QA" },
+                  { key: "landingPageInput", label: "Step 10 – Landing Page Input" },
                 ] as Array<{ key: StepKey; label: string }>).map((item) => {
                   const state = stepStatuses[item.key];
                   const color =
