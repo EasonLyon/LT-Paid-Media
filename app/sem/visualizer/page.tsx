@@ -43,6 +43,7 @@ interface AdGroupTableRow {
   name: string;
   text: string;
   character: number | null;
+  avgMonthlySearches: number | null;
   type: "Headline" | "Description" | "Keyword";
 }
 
@@ -270,7 +271,7 @@ const AD_GROUP_TABLE_COLUMNS = [
   { key: "campaignName", label: "Campaign Name" },
   { key: "name", label: "Name" },
   { key: "text", label: "Text" },
-  { key: "character", label: "Character" },
+  { key: "character", label: "Char/Vol" },
   { key: "type", label: "Type" },
 ] as const;
 
@@ -287,7 +288,7 @@ const EXPORT_ALL_HEADERS = [
   "Landing Page URL",
   "Name",
   "Text",
-  "Character",
+  "Char/Vol",
   "Type",
 ] as const;
 
@@ -366,7 +367,7 @@ function applyAdGroupRowStyle(row: ExportRow, _rowIndex: number, excelRow: Row, 
   const fillColor = AD_GROUP_ROW_FILLS[type as AdGroupTableRow["type"]];
   if (!fillColor) return;
   const typeIndex = columns.indexOf("Type");
-  const characterIndex = columns.indexOf("Character");
+  const characterIndex = columns.indexOf("Char/Vol");
   if (typeIndex !== -1) {
     const cell = excelRow.getCell(typeIndex + 1);
     cell.fill = {
@@ -378,7 +379,9 @@ function applyAdGroupRowStyle(row: ExportRow, _rowIndex: number, excelRow: Row, 
   if (characterIndex !== -1) {
     const characterCell = excelRow.getCell(characterIndex + 1);
     const characterValue =
-      typeof row.Character === "number" ? row.Character : Number.parseFloat(String(row.Character ?? ""));
+      typeof row["Char/Vol"] === "number"
+        ? row["Char/Vol"]
+        : Number.parseFloat(String(row["Char/Vol"] ?? ""));
     const exceeds =
       (type === "Headline" && characterValue > 30) || (type === "Description" && characterValue > 90);
     characterCell.fill = {
@@ -591,6 +594,7 @@ function CampaignVisualizerPageContent() {
             name,
             text: item.Text ?? "",
             character: item.CharCount,
+            avgMonthlySearches: null,
             type: "Headline" as const,
           }));
         });
@@ -602,6 +606,7 @@ function CampaignVisualizerPageContent() {
             name,
             text: item.Text ?? "",
             character: item.CharCount,
+            avgMonthlySearches: null,
             type: "Description" as const,
           }));
         });
@@ -610,6 +615,10 @@ function CampaignVisualizerPageContent() {
           name,
           text: kw.Keyword ?? "",
           character: null,
+          avgMonthlySearches:
+            typeof kw.AvgMonthlySearches === "number" && Number.isFinite(kw.AvgMonthlySearches)
+              ? kw.AvgMonthlySearches
+              : null,
           type: "Keyword" as const,
         }));
         return [...headlines, ...descriptions, ...keywords];
@@ -639,7 +648,7 @@ function CampaignVisualizerPageContent() {
         "Campaign Name": row.campaignName,
         Name: row.name,
         Text: row.text,
-        Character: row.character ?? "",
+        "Char/Vol": row.type === "Keyword" ? row.avgMonthlySearches ?? "" : row.character ?? "",
         Type: row.type,
       })),
     [adGroupTableRows],
@@ -660,7 +669,7 @@ function CampaignVisualizerPageContent() {
         "Landing Page URL": row.landingPageUrl,
         Name: "",
         Text: "",
-        Character: "",
+        "Char/Vol": "",
         Type: "",
       })),
       ...adGroupTableRows.map((row) => ({
@@ -676,7 +685,7 @@ function CampaignVisualizerPageContent() {
         "Landing Page URL": "",
         Name: row.name,
         Text: row.text,
-        Character: row.character ?? "",
+        "Char/Vol": row.type === "Keyword" ? row.avgMonthlySearches ?? "" : row.character ?? "",
         Type: row.type,
       })),
     ],

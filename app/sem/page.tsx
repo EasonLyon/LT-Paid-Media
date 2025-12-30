@@ -107,6 +107,20 @@ const DEFAULT_START_FORM: StartFormState = {
   context: "",
 };
 
+const buildInitialStepStatuses = (): Record<StepKey, StepStatus> => ({
+  start: { status: "idle" },
+  search: { status: "idle" },
+  serp: { status: "idle" },
+  site: { status: "idle" },
+  combine: { status: "idle" },
+  score: { status: "idle" },
+  campaign: { status: "idle" },
+  campaignPlan: { status: "idle" },
+  visualizer: { status: "idle" },
+  landingPageInput: { status: "idle" },
+  landingPagePlan: { status: "idle" },
+});
+
 function toStateListString(value: unknown): string {
   if (!value) return "";
   if (Array.isArray(value)) {
@@ -306,19 +320,7 @@ export default function SemPage() {
   const [progress, setProgress] = useState<number>(0);
   const [step1Elapsed, setStep1Elapsed] = useState<number>(0);
   const { logs, push } = useLogs();
-  const [stepStatuses, setStepStatuses] = useState<Record<StepKey, StepStatus>>({
-    start: { status: "idle" },
-    search: { status: "idle" },
-    serp: { status: "idle" },
-    site: { status: "idle" },
-    combine: { status: "idle" },
-    score: { status: "idle" },
-    campaign: { status: "idle" },
-    campaignPlan: { status: "idle" },
-    visualizer: { status: "idle" },
-    landingPageInput: { status: "idle" },
-    landingPagePlan: { status: "idle" },
-  });
+  const [stepStatuses, setStepStatuses] = useState<Record<StepKey, StepStatus>>(buildInitialStepStatuses);
 
   const [startForm, setStartForm] = useState<StartFormState>({ ...DEFAULT_START_FORM });
   const [adSpendInput, setAdSpendInput] = useState<string>(DEFAULT_START_FORM.monthly_adspend_myr.toString());
@@ -329,7 +331,7 @@ export default function SemPage() {
     !LANGUAGE_OPTIONS.includes(DEFAULT_START_FORM.language),
   );
   const [campaignFilters, setCampaignFilters] = useState<CampaignFiltersState>({
-    tiers: { A: true, B: false, C: false },
+    tiers: { A: true, B: true, C: false },
     paidFlags: { true: true, false: false },
     seoFlags: { true: false, false: false },
   });
@@ -1359,12 +1361,21 @@ export default function SemPage() {
   const pollTimer = useRef<number | null>(null);
   const pollStartRef = useRef<number>(0);
 
-  const cancelStepProgressPoll = () => {
+  const cancelStepProgressPoll = useCallback(() => {
     if (pollTimer.current) {
       window.clearTimeout(pollTimer.current);
       pollTimer.current = null;
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    cancelStepProgressPoll();
+    setProgress(0);
+    setStep1Elapsed(0);
+    setStep8Elapsed(0);
+    setResetNotification(null);
+    setStepStatuses(buildInitialStepStatuses());
+  }, [cancelStepProgressPoll, projectId]);
 
   const scheduleStepProgressPoll = (
     step: "step2" | "step3" | "step4" | "step5" | "step6",
@@ -1640,7 +1651,7 @@ export default function SemPage() {
       .map(([key]) => key === "true");
 
     return {
-      tiers: tiers.length ? tiers : ["A"],
+      tiers: tiers.length ? tiers : ["A", "B"],
       paidFlags: paidFlags,
       seoFlags: seoFlags,
     };
