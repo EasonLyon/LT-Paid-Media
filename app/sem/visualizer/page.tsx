@@ -1,50 +1,49 @@
 'use client';
 
 import Link from "next/link";
+import { Workbook, type Row } from "exceljs";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CampaignPlan, CampaignPlanAdGroup, CampaignPlanKeyword, NormalizedProjectInitInput, OptimizationPlaybook } from "@/types/sem";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Slider } from "@/components/ui/slider";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
-type ViewMode = "hierarchy" | "tables" | "performance" | "playbook";
+type ViewMode = "breakdown" | "tables" | "performance" | "playbook";
 type SortDirection = "asc" | "desc";
+const CAMPAIGN_DAYS_PER_MONTH = 30;
+const VIEW_ORDER: ViewMode[] = ["performance", "breakdown", "tables", "playbook"];
+const copyButtonClass =
+  "text-xs px-2 py-1 border border-default rounded flex items-center gap-1 transition shadow-sm hover:bg-slate-300 hover:shadow-md hover:-translate-y-0.5 dark:hover:bg-slate-600";
 
-interface CampaignRow {
-  idx: number;
-  CampaignName: string;
-  Goal: string;
-  CampaignType: string;
-  BudgetDailyMYR: number | null;
-  TargetCPAMYR: number | null;
-  Language: string;
-  LocationSummary: string;
-  AdGroupsCount: number;
+interface CampaignTableRow {
+  platform: string;
+  funnel: string;
+  entity: string;
+  campaignName: string;
+  campaignType: string;
+  objective: string;
+  keywordsAudience: string;
+  monthlyBudgetMYR: number | null;
+  landingPageUrl: string;
 }
 
-interface AdGroupRow {
-  campaignIdx: number;
-  idx: number;
-  CampaignName: string;
-  AdGroupName: string;
-  DefaultMaxCPCMYR: number | null;
-  KeywordsCount: number;
-  NegativeKeywordsCount: number;
-  ResponsiveSearchAdsCount: number;
-}
-
-interface KeywordRow {
-  campaignIdx: number;
-  adGroupIdx: number;
-  index: number;
-  CampaignName: string;
-  AdGroupName: string;
-  Keyword: string;
-  MatchType: string;
-  IsNegative: boolean;
-  adGroupCpc: number | null;
-  AdGroupCPC: number | null;
-  AvgMonthlySearches: number | null;
-  CPC: number | null;
-  CompetitionIndex: number | null;
+interface AdGroupTableRow {
+  campaignName: string;
+  name: string;
+  text: string;
+  character: number | null;
+  type: "Headline" | "Description" | "Keyword";
 }
 
 interface PerformanceCampaignRow {
@@ -86,9 +85,27 @@ interface PerformanceAssumptions {
   daysPerMonth: number;
 }
 
+interface AdTextRemoval {
+  campaignName: string;
+  adGroupName: string;
+  adIndex: number;
+  textType: "headline" | "description";
+  originalText: string;
+  originalLength: number;
+  limit: number;
+  reason: string;
+}
+
 interface SortState<T extends string> {
   column: T;
   direction: SortDirection;
+}
+
+interface ExistingProjectSummary {
+  id: string;
+  fileCount: number;
+  createdMs: number;
+  websiteDomain?: string;
 }
 
 function EditableCell({
@@ -130,7 +147,7 @@ function EditableCell({
   if (isEditing) {
     return (
       <input
-        className="w-full border rounded px-2 py-1 text-sm"
+        className="w-full rounded border border-default bg-surface px-2 py-1 text-sm text-body"
         value={draft}
         placeholder={placeholder}
         autoFocus
@@ -146,12 +163,12 @@ function EditableCell({
 
   return (
     <div
-      className="w-full min-h-[32px] px-2 py-1 rounded hover:bg-blue-50 cursor-text"
+      className="w-full min-h-[32px] rounded px-2 py-1 hover:bg-slate-100/70 dark:hover:bg-slate-800/70 cursor-text"
       onDoubleClick={() => setIsEditing(true)}
       title="Double click to edit"
     >
       {value === null || typeof value === "undefined" || value === "" ? (
-        <span className="text-gray-400">{placeholder ?? "—"}</span>
+        <span className="text-muted">{placeholder ?? "—"}</span>
       ) : (
         value
       )}
@@ -175,7 +192,7 @@ function TableSortHeader({
   return (
     <button className="flex items-center gap-1 text-left font-medium" onClick={() => onChange(column)} type="button">
       <span>{label}</span>
-      <span className="text-xs text-gray-500">{arrow}</span>
+      <span className="text-xs text-muted">{arrow}</span>
     </button>
   );
 }
@@ -216,9 +233,19 @@ function formatDecimal(value: number | null, fractionDigits = 2): string {
   return value.toLocaleString("en-MY", { maximumFractionDigits: fractionDigits, minimumFractionDigits: 0 });
 }
 
+function computeMonthlyBudget(daily: number | null): number | null {
+  if (daily === null || typeof daily === "undefined" || Number.isNaN(daily)) return null;
+  return daily * CAMPAIGN_DAYS_PER_MONTH;
+}
+
 function formatPercent(value: number | null, fractionDigits = 1): string {
   if (value === null || typeof value === "undefined" || Number.isNaN(value)) return "—";
   return `${value.toFixed(fractionDigits)}%`;
+}
+
+function formatProjectTimestamp(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "Unknown";
+  return new Date(ms).toLocaleString();
 }
 
 const DEFAULT_AVG_CPC = 2.5;
@@ -226,6 +253,49 @@ const DEFAULT_WORST_CONV = 1;
 const DEFAULT_BEST_CONV = 10;
 const DEFAULT_CONVERSION_VALUE = 100;
 const DEFAULT_DAYS_PER_MONTH = 30;
+
+const CAMPAIGN_TABLE_COLUMNS = [
+  { key: "platform", label: "Platform" },
+  { key: "funnel", label: "Funnel" },
+  { key: "entity", label: "Entity" },
+  { key: "campaignName", label: "Campaign Name" },
+  { key: "campaignType", label: "Campaign Type" },
+  { key: "objective", label: "Objective" },
+  { key: "keywordsAudience", label: "Keywords / Audience" },
+  { key: "monthlyBudgetMYR", label: "Monthly Budget (RM)" },
+  { key: "landingPageUrl", label: "Landing Page URL" },
+] as const;
+
+const AD_GROUP_TABLE_COLUMNS = [
+  { key: "campaignName", label: "Campaign Name" },
+  { key: "name", label: "Name" },
+  { key: "text", label: "Text" },
+  { key: "character", label: "Character" },
+  { key: "type", label: "Type" },
+] as const;
+
+const EXPORT_ALL_HEADERS = [
+  "Table",
+  "Platform",
+  "Funnel",
+  "Entity",
+  "Campaign Name",
+  "Campaign Type",
+  "Objective",
+  "Keywords / Audience",
+  "Monthly Budget (RM)",
+  "Landing Page URL",
+  "Name",
+  "Text",
+  "Character",
+  "Type",
+] as const;
+
+function extractKeywordsAudience(name: string): string {
+  if (!name) return "";
+  const parts = name.split("|").map((part) => part.trim()).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : name;
+}
 
 function computeKeywordAverages(list: Array<Pick<CampaignPlanKeyword, "AvgMonthlySearches" | "CPC" | "CompetitionIndex">>) {
   const avg = (values: Array<number | null | undefined>) => {
@@ -241,8 +311,12 @@ function computeKeywordAverages(list: Array<Pick<CampaignPlanKeyword, "AvgMonthl
   };
 }
 
-function downloadCsv(rows: Array<Record<string, string | number | boolean | null>>, filename: string) {
-  const headers = Object.keys(rows[0] ?? {});
+function downloadCsv(
+  rows: Array<Record<string, string | number | boolean | null>>,
+  filename: string,
+  headersOverride?: string[],
+) {
+  const headers = headersOverride ?? Object.keys(rows[0] ?? {});
   const escapeValue = (val: unknown) => {
     if (val === null || typeof val === "undefined") return "";
     const str = String(val);
@@ -265,48 +339,114 @@ function downloadCsv(rows: Array<Record<string, string | number | boolean | null
   URL.revokeObjectURL(url);
 }
 
+function buildExportFilename(prefix: string, base: string) {
+  const safePrefix = prefix.trim().replace(/[^a-zA-Z0-9-_]+/g, "-").replace(/^-+|-+$/g, "");
+  const finalPrefix = safePrefix || "project";
+  return `${finalPrefix}-${base}`;
+}
+
+type ExportRow = Record<string, string | number | boolean | null>;
+type ExportSheet = {
+  name: string;
+  columns: string[];
+  rows: ExportRow[];
+  rowStyle?: (row: ExportRow, rowIndex: number, excelRow: Row, columns: string[]) => void;
+};
+
+const AD_GROUP_ROW_FILLS: Record<AdGroupTableRow["type"], string> = {
+  Headline: "FFD9E8FF",
+  Description: "FFE6F4EA",
+  Keyword: "FFFFF5CC",
+};
+const AD_GROUP_ALERT_FILL = "FFFFC7CE";
+
+function applyAdGroupRowStyle(row: ExportRow, _rowIndex: number, excelRow: Row, columns: string[]) {
+  const type = row.Type;
+  if (typeof type !== "string") return;
+  const fillColor = AD_GROUP_ROW_FILLS[type as AdGroupTableRow["type"]];
+  if (!fillColor) return;
+  const typeIndex = columns.indexOf("Type");
+  const characterIndex = columns.indexOf("Character");
+  if (typeIndex !== -1) {
+    const cell = excelRow.getCell(typeIndex + 1);
+    cell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: fillColor },
+    };
+  }
+  if (characterIndex !== -1) {
+    const characterCell = excelRow.getCell(characterIndex + 1);
+    const characterValue =
+      typeof row.Character === "number" ? row.Character : Number.parseFloat(String(row.Character ?? ""));
+    const exceeds =
+      (type === "Headline" && characterValue > 30) || (type === "Description" && characterValue > 90);
+    characterCell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: exceeds ? AD_GROUP_ALERT_FILL : fillColor },
+    };
+  }
+}
+
+async function downloadWorkbook(
+  sheets: ExportSheet[],
+  filename: string,
+) {
+  const workbook = new Workbook();
+  sheets.forEach((sheetDef) => {
+    const sheet = workbook.addWorksheet(sheetDef.name);
+    sheet.addRow(sheetDef.columns);
+    sheet.getRow(1).font = { bold: true };
+    sheetDef.rows.forEach((row, rowIndex) => {
+      const excelRow = sheet.addRow(sheetDef.columns.map((column) => row[column] ?? ""));
+      sheetDef.rowStyle?.(row, rowIndex, excelRow, sheetDef.columns);
+    });
+    sheetDef.columns.forEach((column, index) => {
+      const maxCellLength = Math.max(
+        column.length,
+        ...sheetDef.rows.map((row) => String(row[column] ?? "").length),
+      );
+      const paddedWidth = Math.min(Math.max(maxCellLength + 2, 10), 60);
+      sheet.getColumn(index + 1).width = paddedWidth;
+    });
+  });
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function CampaignVisualizerPageContent() {
   const searchParams = useSearchParams();
   const [projectIdInput, setProjectIdInput] = useState<string>("");
+  const [existingProjects, setExistingProjects] = useState<ExistingProjectSummary[]>([]);
+  const [isFetchingProjects, setIsFetchingProjects] = useState(false);
+  const [projectListError, setProjectListError] = useState<string | null>(null);
+  const [entityOverride, setEntityOverride] = useState<string>("");
   const [campaigns, setCampaigns] = useState<CampaignPlan[]>([]);
   const [optimizationPlaybook, setOptimizationPlaybook] = useState<OptimizationPlaybook | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("performance");
+  const [viewSwipeDirection, setViewSwipeDirection] = useState<"left" | "right">("right");
   const [fileName, setFileName] = useState<string | null>(null);
   const [backupFileName, setBackupFileName] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>("");
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [adTextRemovals, setAdTextRemovals] = useState<AdTextRemoval[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [selectedAdGroup, setSelectedAdGroup] = useState<{ campaignIdx: number; adGroupIdx: number } | null>(null);
   const [selectedCampaignSettings, setSelectedCampaignSettings] = useState<{ campaignIdx: number } | null>(null);
   const [expandedCampaigns, setExpandedCampaigns] = useState<Record<number, boolean>>({});
-  const [campaignSort, setCampaignSort] = useState<SortState<keyof CampaignRow>>({
-    column: "CampaignName",
-    direction: "asc",
-  });
-  const [adGroupSort, setAdGroupSort] = useState<SortState<keyof AdGroupRow>>({
-    column: "CampaignName",
-    direction: "asc",
-  });
-  const [keywordSort, setKeywordSort] = useState<SortState<keyof KeywordRow>>({
-    column: "CampaignName",
-    direction: "asc",
-  });
   const [copiedName, setCopiedName] = useState<string | null>(null);
-  const [filters, setFilters] = useState<{
-    campaign: string;
-    adGroup: string;
-    matchType: string;
-    negative: "all" | "normal" | "negative";
-    minCpc: string;
-    maxCpc: string;
-  }>({
-    campaign: "",
-    adGroup: "",
-    matchType: "",
-    negative: "all",
-    minCpc: "",
-    maxCpc: "",
-  });
   const [normalizedInput, setNormalizedInput] = useState<NormalizedProjectInitInput | null>(null);
   const [assumptions, setAssumptions] = useState<PerformanceAssumptions>({
     averageCpc: DEFAULT_AVG_CPC,
@@ -319,12 +459,23 @@ function CampaignVisualizerPageContent() {
     column: "monthlySpend",
     direction: "desc",
   });
+  const playbookFrequencies = useMemo(() => {
+    if (!optimizationPlaybook) {
+      return [];
+    }
+    const unique = new Set(
+      optimizationPlaybook.Rules_Of_Engagement.map((rule) => rule.Frequency).filter((value) => Boolean(value)),
+    );
+    return Array.from(unique);
+  }, [optimizationPlaybook]);
+
   const [monthlySpendOverride, setMonthlySpendOverride] = useState<number | null>(null);
   const monthlySpendSliderMin = 1000;
   const [mermaidSvg, setMermaidSvg] = useState<string>("");
   const [mermaidError, setMermaidError] = useState<string | null>(null);
   const mermaidRef = useRef<typeof import("mermaid").default | null>(null);
   const mermaidRenderId = useRef(0);
+  const prevViewModeRef = useRef<ViewMode>(viewMode);
   const [salesValueAutoSet, setSalesValueAutoSet] = useState(false);
   const [monthlySpendInput, setMonthlySpendInput] = useState<string>("");
   const [isMobileViewport, setIsMobileViewport] = useState(false);
@@ -379,85 +530,158 @@ function CampaignVisualizerPageContent() {
     return () => window.removeEventListener("resize", updateViewport);
   }, []);
 
-  const campaignRows = useMemo<CampaignRow[]>(() => {
+  const refreshExistingProjects = useCallback(async () => {
+    setIsFetchingProjects(true);
+    setProjectListError(null);
+    try {
+      const res = await fetch("/api/sem/projects", { cache: "no-store" });
+      const json = (await res.json()) as { projects?: ExistingProjectSummary[]; error?: string };
+      if (!res.ok || json.error) {
+        const message = json.error ?? res.statusText;
+        throw new Error(message);
+      }
+      const projects = Array.isArray(json.projects) ? json.projects : [];
+      const sorted = projects.sort((a, b) => (b.createdMs ?? 0) - (a.createdMs ?? 0));
+      setExistingProjects(sorted);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unable to load projects";
+      setExistingProjects([]);
+      setProjectListError(message);
+    } finally {
+      setIsFetchingProjects(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshExistingProjects();
+  }, [refreshExistingProjects]);
+
+  const entityValue = useMemo(() => {
+    const trimmed = entityOverride.trim();
+    return trimmed !== "" ? trimmed : projectIdInput;
+  }, [entityOverride, projectIdInput]);
+
+  const campaignTableRows = useMemo<CampaignTableRow[]>(() => {
     return campaigns.map((campaign, idx) => {
-      const included = campaign.Location?.Included?.length ?? 0;
-      const excluded = campaign.Location?.Excluded?.length ?? 0;
-      const summary = `${included} inc, ${excluded} exc`;
-      
+      const campaignName = campaign.CampaignName ?? `Campaign ${idx + 1}`;
       return {
-        idx,
-        CampaignName: campaign.CampaignName ?? `Campaign ${idx + 1}`,
-        Goal: campaign.Goal ?? "",
-        CampaignType: campaign.CampaignType ?? "",
-        BudgetDailyMYR: campaign.BudgetDailyMYR ?? null,
-        TargetCPAMYR: campaign.TargetCPAMYR ?? null,
-        Language: Array.isArray(campaign.Language) ? campaign.Language.join(", ") : (campaign.Language as string | null) ?? "",
-        LocationSummary: summary,
-        AdGroupsCount: Array.isArray(campaign.AdGroups) ? campaign.AdGroups.length : 0,
+        platform: "Google",
+        funnel: "BOFU",
+        entity: entityValue,
+        campaignName,
+        campaignType: campaign.CampaignType ?? "",
+        objective: campaign.Goal ?? "",
+        keywordsAudience: extractKeywordsAudience(campaignName),
+        monthlyBudgetMYR: campaign.MonthlyBudgetMYR ?? computeMonthlyBudget(campaign.BudgetDailyMYR ?? null),
+        landingPageUrl: websiteUrl ?? "",
       };
     });
-  }, [campaigns]);
+  }, [campaigns, entityValue, websiteUrl]);
 
-  const adGroupRows = useMemo<AdGroupRow[]>(() => {
+  const adGroupTableRows = useMemo<AdGroupTableRow[]>(() => {
     return campaigns.flatMap((campaign, campaignIdx) =>
-      (campaign.AdGroups ?? []).map((adGroup, idx) => {
-        const targeting = adGroup.Targeting;
-        const keywords = keywordList(targeting, false);
-        const negatives = keywordList(targeting, true);
+      (campaign.AdGroups ?? []).flatMap((adGroup, idx) => {
+        const campaignName = campaign.CampaignName ?? `Campaign ${campaignIdx + 1}`;
+        const name = adGroup.AdGroupName ?? `Ad Group ${idx + 1}`;
         const ads = Array.isArray(adGroup.ResponsiveSearchAds) ? adGroup.ResponsiveSearchAds : [];
-        return {
-          campaignIdx,
-          idx,
-          CampaignName: campaign.CampaignName ?? `Campaign ${campaignIdx + 1}`,
-          AdGroupName: adGroup.AdGroupName ?? `Ad Group ${idx + 1}`,
-          DefaultMaxCPCMYR: adGroup.DefaultMaxCPCMYR ?? null,
-          KeywordsCount: keywords.length,
-          NegativeKeywordsCount: negatives.length,
-          ResponsiveSearchAdsCount: ads.length,
-        };
+        const headlines = ads.flatMap((ad) => {
+          const meta = ad.HeadlinesMeta ?? ad.Headlines?.map((text) => ({ Text: text, CharCount: text.length })) ?? [];
+          return meta.map((item) => ({
+            campaignName,
+            name,
+            text: item.Text ?? "",
+            character: item.CharCount,
+            type: "Headline" as const,
+          }));
+        });
+        const descriptions = ads.flatMap((ad) => {
+          const meta =
+            ad.DescriptionsMeta ?? ad.Descriptions?.map((text) => ({ Text: text, CharCount: text.length })) ?? [];
+          return meta.map((item) => ({
+            campaignName,
+            name,
+            text: item.Text ?? "",
+            character: item.CharCount,
+            type: "Description" as const,
+          }));
+        });
+        const keywords = keywordList(adGroup.Targeting, false).map((kw) => ({
+          campaignName,
+          name,
+          text: kw.Keyword ?? "",
+          character: null,
+          type: "Keyword" as const,
+        }));
+        return [...headlines, ...descriptions, ...keywords];
       }),
     );
   }, [campaigns]);
 
-  const keywordRows = useMemo<KeywordRow[]>(() => {
-    return campaigns.flatMap((campaign, campaignIdx) =>
-      (campaign.AdGroups ?? []).flatMap((adGroup, adGroupIdx) => {
-        const targeting = adGroup.Targeting;
-        const normalKeywords = keywordList(targeting, false).map((kw, index) => ({
-          campaignIdx,
-          adGroupIdx,
-          index,
-          CampaignName: campaign.CampaignName ?? `Campaign ${campaignIdx + 1}`,
-          AdGroupName: adGroup.AdGroupName ?? `Ad Group ${adGroupIdx + 1}`,
-          Keyword: kw.Keyword ?? "",
-          MatchType: kw.MatchType ?? "",
-          IsNegative: false,
-          adGroupCpc: adGroup.DefaultMaxCPCMYR ?? null,
-          AdGroupCPC: adGroup.DefaultMaxCPCMYR ?? null,
-          AvgMonthlySearches: kw.AvgMonthlySearches ?? null,
-          CPC: kw.CPC ?? null,
-          CompetitionIndex: kw.CompetitionIndex ?? null,
-        }));
-        const negativeKeywords = keywordList(targeting, true).map((kw, index) => ({
-          campaignIdx,
-          adGroupIdx,
-          index,
-          CampaignName: campaign.CampaignName ?? `Campaign ${campaignIdx + 1}`,
-          AdGroupName: adGroup.AdGroupName ?? `Ad Group ${adGroupIdx + 1}`,
-          Keyword: kw.Keyword ?? "",
-          MatchType: kw.MatchType ?? "",
-          IsNegative: true,
-          adGroupCpc: adGroup.DefaultMaxCPCMYR ?? null,
-          AdGroupCPC: adGroup.DefaultMaxCPCMYR ?? null,
-          AvgMonthlySearches: kw.AvgMonthlySearches ?? null,
-          CPC: kw.CPC ?? null,
-          CompetitionIndex: kw.CompetitionIndex ?? null,
-        }));
-        return [...normalKeywords, ...negativeKeywords];
-      }),
-    );
-  }, [campaigns]);
+  const campaignExportRows = useMemo(
+    () =>
+      campaignTableRows.map((row) => ({
+        Platform: row.platform,
+        Funnel: row.funnel,
+        Entity: row.entity,
+        "Campaign Name": row.campaignName,
+        "Campaign Type": row.campaignType,
+        Objective: row.objective,
+        "Keywords / Audience": row.keywordsAudience,
+        "Monthly Budget (RM)": row.monthlyBudgetMYR ?? "",
+        "Landing Page URL": row.landingPageUrl,
+      })),
+    [campaignTableRows],
+  );
+
+  const adGroupExportRows = useMemo(
+    () =>
+      adGroupTableRows.map((row) => ({
+        "Campaign Name": row.campaignName,
+        Name: row.name,
+        Text: row.text,
+        Character: row.character ?? "",
+        Type: row.type,
+      })),
+    [adGroupTableRows],
+  );
+
+  const exportAllRows = useMemo(
+    () => [
+      ...campaignTableRows.map((row) => ({
+        Table: "Campaign",
+        Platform: row.platform,
+        Funnel: row.funnel,
+        Entity: row.entity,
+        "Campaign Name": row.campaignName,
+        "Campaign Type": row.campaignType,
+        Objective: row.objective,
+        "Keywords / Audience": row.keywordsAudience,
+        "Monthly Budget (RM)": row.monthlyBudgetMYR ?? "",
+        "Landing Page URL": row.landingPageUrl,
+        Name: "",
+        Text: "",
+        Character: "",
+        Type: "",
+      })),
+      ...adGroupTableRows.map((row) => ({
+        Table: "Ad Group",
+        Platform: "",
+        Funnel: "",
+        Entity: "",
+        "Campaign Name": row.campaignName,
+        "Campaign Type": "",
+        Objective: "",
+        "Keywords / Audience": "",
+        "Monthly Budget (RM)": "",
+        "Landing Page URL": "",
+        Name: row.name,
+        Text: row.text,
+        Character: row.character ?? "",
+        Type: row.type,
+      })),
+    ],
+    [campaignTableRows, adGroupTableRows],
+  );
 
   const averageAdGroupCpc = useMemo(() => {
     const cpcs: number[] = [];
@@ -715,68 +939,6 @@ function CampaignVisualizerPageContent() {
     void renderDiagram();
   }, [assumptions.bestConversionRate, assumptions.worstConversionRate, isMobileViewport, performanceRows, performanceTotals]);
 
-  const filteredCampaigns = useMemo(() => {
-    const sorted = [...campaignRows].sort((a, b) => {
-      const dir = campaignSort.direction === "asc" ? 1 : -1;
-      const av = a[campaignSort.column];
-      const bv = b[campaignSort.column];
-      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
-      return String(av).localeCompare(String(bv)) * dir;
-    });
-    return sorted.filter((row) => row.CampaignName.toLowerCase().includes(filters.campaign.toLowerCase()));
-  }, [campaignRows, campaignSort, filters.campaign]);
-
-  const filteredAdGroups = useMemo(() => {
-    const matches = adGroupRows.filter((row) => {
-      const matchesCampaign = row.CampaignName.toLowerCase().includes(filters.campaign.toLowerCase());
-      const matchesAdGroup = row.AdGroupName.toLowerCase().includes(filters.adGroup.toLowerCase());
-      const minCpc =
-        filters.minCpc.trim() === "" || !Number.isFinite(Number(filters.minCpc)) ? null : Number(filters.minCpc);
-      const maxCpc =
-        filters.maxCpc.trim() === "" || !Number.isFinite(Number(filters.maxCpc)) ? null : Number(filters.maxCpc);
-      const withinMin = minCpc === null || (row.DefaultMaxCPCMYR ?? Infinity) >= minCpc;
-      const withinMax = maxCpc === null || (row.DefaultMaxCPCMYR ?? 0) <= maxCpc;
-      return matchesCampaign && matchesAdGroup && withinMin && withinMax;
-    });
-    const sorted = matches.sort((a, b) => {
-      const dir = adGroupSort.direction === "asc" ? 1 : -1;
-      const av = a[adGroupSort.column];
-      const bv = b[adGroupSort.column];
-      if (typeof av === "number" && typeof bv === "number") return ((av ?? 0) - (bv ?? 0)) * dir;
-      return String(av).localeCompare(String(bv)) * dir;
-    });
-    return sorted;
-  }, [adGroupRows, adGroupSort, filters]);
-
-  const filteredKeywords = useMemo(() => {
-    const matches = keywordRows.filter((row) => {
-      const matchesCampaign = row.CampaignName.toLowerCase().includes(filters.campaign.toLowerCase());
-      const matchesAdGroup = row.AdGroupName.toLowerCase().includes(filters.adGroup.toLowerCase());
-      const matchTypeValue = row.MatchType ? row.MatchType.toLowerCase() : "";
-      const matchesMatchType = !filters.matchType || matchTypeValue.includes(filters.matchType.toLowerCase());
-      const matchesNegative =
-        filters.negative === "all" ||
-        (filters.negative === "negative" ? row.IsNegative : !row.IsNegative);
-      const minCpc =
-        filters.minCpc.trim() === "" || !Number.isFinite(Number(filters.minCpc)) ? null : Number(filters.minCpc);
-      const maxCpc =
-        filters.maxCpc.trim() === "" || !Number.isFinite(Number(filters.maxCpc)) ? null : Number(filters.maxCpc);
-      const withinMin = minCpc === null || (row.adGroupCpc ?? Infinity) >= minCpc;
-      const withinMax = maxCpc === null || (row.adGroupCpc ?? 0) <= maxCpc;
-      return matchesCampaign && matchesAdGroup && matchesMatchType && matchesNegative && withinMin && withinMax;
-    });
-    const sorted = matches.sort((a, b) => {
-      const dir = keywordSort.direction === "asc" ? 1 : -1;
-      const av = a[keywordSort.column];
-      const bv = b[keywordSort.column];
-      if (typeof av === "number" && typeof bv === "number") return ((av ?? 0) - (bv ?? 0)) * dir;
-      return String(av).localeCompare(String(bv)) * dir;
-    });
-    return sorted;
-  }, [keywordRows, keywordSort, filters]);
-
-  const keywordAverages = useMemo(() => computeKeywordAverages(filteredKeywords), [filteredKeywords]);
-
   useEffect(() => {
     const paramPid = searchParams?.get("projectId");
     let stored: string | null = null;
@@ -799,10 +961,26 @@ function CampaignVisualizerPageContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
+  useEffect(() => {
+    const prevViewMode = prevViewModeRef.current;
+    if (prevViewMode === viewMode) {
+      return;
+    }
+    const prevIndex = VIEW_ORDER.indexOf(prevViewMode);
+    const nextIndex = VIEW_ORDER.indexOf(viewMode);
+    if (prevIndex !== -1 && nextIndex !== -1) {
+      setViewSwipeDirection(nextIndex > prevIndex ? "right" : "left");
+    } else {
+      setViewSwipeDirection("right");
+    }
+    prevViewModeRef.current = viewMode;
+  }, [viewMode]);
+
   const loadPlan = async (pid?: string) => {
     const targetProjectId = pid ?? projectIdInput;
     setIsLoading(true);
-    setStatusMessage("Loading plan and creating backup…");
+    setStatusMessage("Loading plan…");
+    setAdTextRemovals([]);
     try {
       const params = new URLSearchParams();
       if (targetProjectId) params.set("projectId", targetProjectId);
@@ -815,6 +993,7 @@ function CampaignVisualizerPageContent() {
         backupFileName?: string;
         error?: string;
         normalizedInput?: NormalizedProjectInitInput | null;
+        adTextRemovals?: AdTextRemoval[];
       };
       if (!res.ok) {
         throw new Error(json.error || res.statusText);
@@ -837,8 +1016,9 @@ function CampaignVisualizerPageContent() {
       setWebsiteUrl(json.normalizedInput?.website ?? null);
       setSalesValueAutoSet(false);
       setMonthlySpendOverride(null);
+      setAdTextRemovals(json.adTextRemovals ?? []);
       setStatusMessage(
-        `Loaded ${json.campaigns?.length ?? 0} campaign(s) from ${json.fileName ?? "10/11-*.json"}. Backup: ${
+        `Loaded ${json.campaigns?.length ?? 0} campaign(s) from ${json.fileName ?? "11-*.json"}. Backup: ${
           json.backupFileName ?? "n/a"
         }`,
       );
@@ -848,80 +1028,33 @@ function CampaignVisualizerPageContent() {
       setCampaigns([]);
       setOptimizationPlaybook(null);
       setNormalizedInput(null);
+      setAdTextRemovals([]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const updateCampaign = (campaignIdx: number, updates: Partial<CampaignPlan>) => {
-    setCampaigns((prev) =>
-      prev.map((campaign, idx) => (idx === campaignIdx ? { ...campaign, ...updates } : campaign)),
-    );
-  };
-
-  const updateAdGroup = (campaignIdx: number, adGroupIdx: number, updates: Partial<CampaignPlanAdGroup>) => {
-    setCampaigns((prev) =>
-      prev.map((campaign, idx) => {
-        if (idx !== campaignIdx) return campaign;
-        const adGroups = campaign.AdGroups ?? [];
-        return {
-          ...campaign,
-          AdGroups: adGroups.map((group, gIdx) => (gIdx === adGroupIdx ? { ...group, ...updates } : group)),
-        };
-      }),
-    );
-  };
-
-  const updateKeywordRow = (
-    row: KeywordRow,
-    updates: { keyword?: string; matchType?: string; negative?: boolean | null },
-  ) => {
-    setCampaigns((prev) =>
-      prev.map((campaign, cIdx) => {
-        if (cIdx !== row.campaignIdx) return campaign;
-        const adGroups = campaign.AdGroups ?? [];
-        return {
-          ...campaign,
-          AdGroups: adGroups.map((group, gIdx) => {
-            if (gIdx !== row.adGroupIdx) return group;
-            const targeting = { ...(group.Targeting ?? {}) };
-            const keywords = keywordList(targeting, row.IsNegative);
-            const otherKeywords = keywordList(targeting, !row.IsNegative);
-            const current = keywords[row.index] ?? { Keyword: "", MatchType: "" };
-            const keywordChanged =
-              typeof updates.keyword === "string" &&
-              updates.keyword.trim() !== "" &&
-              updates.keyword.trim() !== current.Keyword;
-            const updatedCurrent = {
-              ...current,
-              Keyword: updates.keyword ?? current.Keyword,
-              MatchType: updates.matchType ?? current.MatchType,
-              AvgMonthlySearches: keywordChanged ? null : current.AvgMonthlySearches ?? null,
-              CPC: keywordChanged ? null : current.CPC ?? null,
-              CompetitionIndex: keywordChanged ? null : current.CompetitionIndex ?? null,
-            };
-
-            if (typeof updates.negative === "boolean" && updates.negative !== row.IsNegative) {
-              const remaining = keywords.filter((_, idx) => idx !== row.index);
-              const destination = [...otherKeywords, updatedCurrent];
-              if (updates.negative) {
-                targeting.Keywords = remaining;
-                targeting.NegativeKeywords = destination;
-              } else {
-                targeting.NegativeKeywords = remaining;
-                targeting.Keywords = destination;
-              }
-            } else {
-              const updated = keywords.map((kw, idx) => (idx === row.index ? updatedCurrent : kw));
-              if (row.IsNegative) targeting.NegativeKeywords = updated;
-              else targeting.Keywords = updated;
-            }
-
-            return { ...group, Targeting: targeting };
-          }),
-        };
-      }),
-    );
+  const deleteFile = async (target: string, label: string) => {
+    if (!projectIdInput || !target) return;
+    const confirmed = window.confirm(`Delete ${label} ${target}? This cannot be undone.`);
+    if (!confirmed) return;
+    setIsDeleting(true);
+    try {
+      const params = new URLSearchParams({ projectId: projectIdInput, file: target });
+      const res = await fetch(`/api/sem/project-files?${params.toString()}`, { method: "DELETE" });
+      const json = (await res.json()) as { deleted?: boolean; error?: string };
+      if (!res.ok || !json.deleted) {
+        throw new Error(json.error || res.statusText);
+      }
+      if (target === fileName) setFileName(null);
+      if (target === backupFileName) setBackupFileName(null);
+      setStatusMessage(`Deleted ${target}.`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unable to delete file";
+      setStatusMessage(message);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const saveChanges = async () => {
@@ -971,6 +1104,69 @@ function CampaignVisualizerPageContent() {
   const selectedCampaignSettingsData = selectedCampaignSettings
     ? campaigns[selectedCampaignSettings.campaignIdx]
     : null;
+  const detailContent = (
+    <>
+      {!selectedAdGroupData && !selectedCampaignSettingsData && (
+        <div className="text-sm text-muted">
+          Select &quot;Campaign Settings&quot; or an &quot;Ad Group&quot; on the left to view details here.
+        </div>
+      )}
+      {selectedCampaignSettingsData && (
+        <CampaignSettingsPanel
+          campaign={selectedCampaignSettingsData}
+          onClose={() => setSelectedCampaignSettings(null)}
+        />
+      )}
+      {selectedAdGroupData ? (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-3 justify-between">
+            <div>
+              <div className="text-xs text-muted">Ad Group detail</div>
+              <div className="flex items-center gap-2 font-semibold">
+                <span>
+                  {selectedAdGroupData.AdGroups?.[selectedAdGroup!.adGroupIdx]?.AdGroupName ?? "Ad Group"}
+                </span>
+                <button
+                  type="button"
+                  className={`${copyButtonClass} ${
+                    copiedName === `adgroup-${selectedAdGroup!.campaignIdx}-${selectedAdGroup!.adGroupIdx}`
+                      ? "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/30 dark:text-green-200 dark:border-green-700"
+                      : "dark:text-slate-100"
+                  }`}
+                  onClick={() =>
+                    void copyName(
+                      selectedAdGroupData.AdGroups?.[selectedAdGroup!.adGroupIdx]?.AdGroupName ?? "Ad Group",
+                      `adgroup-${selectedAdGroup!.campaignIdx}-${selectedAdGroup!.adGroupIdx}`,
+                    )
+                  }
+                  title="Copy ad group name"
+                >
+                  {copiedName === `adgroup-${selectedAdGroup!.campaignIdx}-${selectedAdGroup!.adGroupIdx}` ? (
+                    <CheckIcon className="w-4 h-4" />
+                  ) : (
+                    <ClipboardIcon className="w-4 h-4" />
+                  )}
+                  <span>
+                    {copiedName === `adgroup-${selectedAdGroup!.campaignIdx}-${selectedAdGroup!.adGroupIdx}`
+                      ? "Copied"
+                      : "Copy"}
+                  </span>
+                </button>
+              </div>
+              <div className="text-sm text-muted">
+                In campaign: {selectedAdGroupData.CampaignName} • CPC:{" "}
+                {formatCpc(selectedAdGroupData.AdGroups?.[selectedAdGroup!.adGroupIdx]?.DefaultMaxCPCMYR ?? null)}
+              </div>
+            </div>
+          </div>
+          <AdGroupTabs
+            adGroup={selectedAdGroupData.AdGroups?.[selectedAdGroup!.adGroupIdx]}
+            targeting={selectedAdGroupData.AdGroups?.[selectedAdGroup!.adGroupIdx]?.Targeting}
+          />
+        </div>
+      ) : null}
+    </>
+  );
 
   const copyName = async (text: string, key: string) => {
     try {
@@ -982,497 +1178,697 @@ function CampaignVisualizerPageContent() {
     }
   };
 
+  const filesTooltip =
+    fileName || backupFileName
+      ? `File: ${fileName ?? "waiting for load"}${backupFileName ? ` | Backup: ${backupFileName}` : ""}`
+      : "No files loaded yet.";
+  const existingProjectValue = existingProjects.find((project) => project.id === projectIdInput)?.id;
+
   return (
-    <main className="min-h-screen bg-gray-50 p-6 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <main className="min-h-screen bg-surface-muted p-6 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <div className="max-w-6xl mx-auto space-y-6">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm text-gray-600">Step 9</p>
-            <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Campaign Visualization & QA</h1>
-            <p className="text-sm text-gray-600">
-              Reads Step 10 JSON, creates an automatic backup, and lets you review & edit before Google Ads upload.
-            </p>
+          <div className="space-y-2">
+            <Badge variant="secondary">Step 9</Badge>
+            <div>
+              <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Campaign Visualization & QA</h1>
+              <p className="text-sm text-muted">
+                Reads Step 10 JSON, creates an automatic backup, and lets you review & edit before Google Ads upload.
+              </p>
+            </div>
           </div>
-          <Link className="text-blue-600 underline text-sm dark:text-blue-300" href="/sem">
+          <Link className={buttonVariants({ variant: "link", size: "sm" })} href="/sem">
             ← Back to SEM pipeline
           </Link>
         </header>
 
-        {websiteUrl && (
-          <div className="bg-white border rounded-lg p-3 flex items-center justify-between dark:border-slate-700 dark:bg-slate-900">
-            <div className="flex flex-col">
-              <span className="text-xs text-gray-500 uppercase font-medium">Website Context</span>
-              <span className="font-semibold text-slate-900 dark:text-slate-100">{websiteUrl}</span>
-            </div>
-            <a
-              href={websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition-colors"
-            >
-              Visit Website ↗
-            </a>
-          </div>
-        )}
-
-        <section className="bg-white border rounded-lg p-4 space-y-3 dark:border-slate-700 dark:bg-slate-900">
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="text-sm flex items-center gap-2">
-              <span className="text-gray-700 dark:text-slate-200">projectId</span>
-              <input
-                className="border rounded px-3 py-2 text-sm w-60 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                value={projectIdInput}
-                onChange={(e) => setProjectIdInput(e.target.value)}
-                placeholder="YYYYMMDD-HH-001"
-              />
-            </label>
-            <button
-              className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
-              onClick={() => void loadPlan()}
-              disabled={isLoading}
-            >
-              {isLoading ? "Loading…" : "Load JSON"}
-            </button>
-            <button
-              className="border rounded px-4 py-2 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-              onClick={saveChanges}
-              disabled={isSaving || !campaigns.length}
-            >
-              {isSaving ? "Saving…" : "Save changes"}
-            </button>
-            <button
-              className="border rounded px-4 py-2 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-              onClick={() => void loadPlan(projectIdInput)}
-              disabled={isLoading || !projectIdInput}
-            >
-              Reload from disk
-            </button>
-          </div>
-          <div className="text-sm text-gray-700 flex flex-wrap gap-3 dark:text-slate-200">
-            <span className="px-2 py-1 rounded bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-100">
-              File: {fileName ?? "waiting for load"}
-            </span>
-            {backupFileName && (
-              <span className="px-2 py-1 rounded bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-200">
-                Backup: {backupFileName}
-              </span>
-            )}
-            <span className="px-2 py-1 rounded bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-100">
-              Tip: double click a cell in tables view to edit. Toggle Normal/Negative in Keyword table.
-            </span>
-          </div>
-          {statusMessage && <div className="text-sm text-gray-800 dark:text-slate-200">{statusMessage}</div>}
-          <div className="flex items-center gap-2 text-sm">
-            <span className="font-medium">Views</span>
-            <button
-              type="button"
-              className={`px-3 py-1 rounded border ${
-                viewMode === "performance" ? "bg-blue-600 text-white" : "bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-              }`}
-              onClick={() => setViewMode("performance")}
-            >
-              Performance calculator (default)
-            </button>
-            <button
-              type="button"
-              className={`px-3 py-1 rounded border ${
-                viewMode === "hierarchy" ? "bg-blue-600 text-white" : "bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-              }`}
-              onClick={() => setViewMode("hierarchy")}
-            >
-              Hierarchical view
-            </button>
-            <button
-              type="button"
-              className={`px-3 py-1 rounded border ${
-                viewMode === "tables" ? "bg-blue-600 text-white" : "bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-              }`}
-              onClick={() => setViewMode("tables")}
-            >
-              Tables for QA & export
-            </button>
-            <button
-              type="button"
-              className={`px-3 py-1 rounded border ${
-                viewMode === "playbook" ? "bg-blue-600 text-white" : "bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-              }`}
-              onClick={() => setViewMode("playbook")}
-            >
-              Optimization Playbook
-            </button>
-          </div>
-        </section>
-
-        {viewMode === "performance" && (
-          <section className="bg-white border rounded-lg p-4 space-y-5 dark:border-slate-700 dark:bg-slate-900">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Performance calculator</h2>
-                <p className="text-sm text-gray-600 dark:text-slate-300">
-                  Forecast clicks, leads, revenue, and ROI using 00-user-input and 10/11 campaign plan budgets.
-                </p>
-              </div>
-              <div className="flex flex-col items-end gap-1 text-sm">
-                <span className="px-2 py-1 rounded bg-gray-100 text-gray-800 dark:bg-slate-800 dark:text-slate-100">
-                  Step 1 budget: {normalizedInput ? formatCurrency(normalizedInput.monthly_adspend_myr) : "—"}
-                </span>
-                <span className="px-2 py-1 rounded bg-blue-50 text-blue-800 dark:bg-blue-900/30 dark:text-blue-100">
-                  Campaign spend ×{assumptions.daysPerMonth}d: {formatCurrency(performanceTotals.totalMonthlySpend)}
-                </span>
-              </div>
-            </div>
-            {!campaigns.length ? (
-              <div className="text-sm text-gray-600 dark:text-slate-300">
-                Load a project to pull budgets from 00/11 JSON before using the calculator.
-              </div>
-            ) : (
-              <>
-                <div className="border rounded-lg bg-gray-50 p-4 dark:border-slate-700 dark:bg-slate-800">
-                  <div className="flex items-center justify-between gap-2 mb-3">
-                    <div className="text-sm font-semibold" title="Ad spend flowing into clicks, leads, revenue, and ROI">
-                      Performance funnel
-                    </div>
-                    {mermaidError && (
-                      <span className="text-xs text-red-700 bg-red-50 px-2 py-1 rounded border border-red-200">
-                        {mermaidError}
-                      </span>
-                    )}
+        <Card>
+          <CardHeader className="space-y-1">
+            <CardTitle>Project controls</CardTitle>
+            <CardDescription>Load, review, and manage campaign plan files.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="space-y-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                  <label className="text-sm flex flex-col items-start gap-1 sm:flex-row sm:items-center">
+                    <span className="text-muted">projectId</span>
+                    <Input
+                      className="w-full sm:w-60"
+                      value={projectIdInput}
+                      onChange={(e) => setProjectIdInput(e.target.value)}
+                      placeholder="YYYYMMDD-HH-001"
+                    />
+                  </label>
+                  <Button className="w-full sm:w-auto" onClick={() => void loadPlan()} disabled={isLoading}>
+                    {isLoading ? "Loading…" : "Load JSON"}
+                  </Button>
+                  <Button
+                    className="w-full sm:w-auto"
+                    variant="secondary"
+                    onClick={saveChanges}
+                    disabled={isSaving || !campaigns.length}
+                  >
+                    {isSaving ? "Saving…" : "Save changes"}
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button className="w-full sm:w-auto" variant="outline">
+                        More
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onSelect={(event) => {
+                          event.preventDefault();
+                          void loadPlan(projectIdInput);
+                        }}
+                        disabled={isLoading || !projectIdInput}
+                      >
+                        Reload from disk
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={(event) => {
+                          event.preventDefault();
+                          if (fileName) void deleteFile(fileName, "file");
+                        }}
+                        disabled={isDeleting || !fileName}
+                      >
+                        Delete current file
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={(event) => {
+                          event.preventDefault();
+                          if (backupFileName) void deleteFile(backupFileName, "backup");
+                        }}
+                        disabled={isDeleting || !backupFileName}
+                      >
+                        Delete backup
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+                <div className="grid gap-2">
+                  <div className="flex flex-col gap-2 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
+                    <span>Or select an existing project</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void refreshExistingProjects()}
+                      disabled={isFetchingProjects}
+                    >
+                      {isFetchingProjects ? "Loading…" : "Refresh list"}
+                    </Button>
                   </div>
-                  {mermaidSvg ? (
-                    <div className="overflow-auto min-h-[260px]" dangerouslySetInnerHTML={{ __html: mermaidSvg }} />
-                  ) : (
-                    <div className="text-sm text-gray-700">Load budgets or adjust sliders to see the funnel.</div>
+                  <Select
+                    value={existingProjectValue}
+                    disabled={existingProjects.length === 0}
+                    onValueChange={(value) => {
+                      if (value) {
+                        setProjectIdInput(value);
+                        void loadPlan(value);
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-10 w-full text-sm">
+                      <SelectValue placeholder="Choose existing project" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {existingProjects.map((project) => (
+                        <SelectItem key={project.id} value={project.id}>
+                          {project.id} — {project.fileCount} {project.fileCount === 1 ? "file" : "files"} •{" "}
+                          {formatProjectTimestamp(project.createdMs)}
+                          {project.websiteDomain ? ` • ${project.websiteDomain}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {projectListError && <div className="text-xs text-red-700 dark:text-red-300">{projectListError}</div>}
+                  {!projectListError && !isFetchingProjects && existingProjects.length === 0 && (
+                    <div className="text-xs text-muted">No existing projects found in output/ yet.</div>
                   )}
                 </div>
-
-                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-                  <label className="border rounded-lg p-3 bg-gray-50 space-y-2">
-                    <div className="flex items-center justify-between text-sm font-medium" title="Model different total budgets to see how traffic, leads, and revenue scale. Defaults to your campaign budgets.">
-                      <span>Monthly ad spend (MYR)</span>
-                      <span className="text-xs font-semibold px-2 py-1 rounded bg-blue-50 text-blue-800">
-                        {formatCurrency(Math.round(effectiveMonthlySpend))}
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min={monthlySpendSliderMin}
-                      max={monthlySpendSliderMax}
-                      step={monthlySpendSliderStep}
-                      className="w-full accent-blue-600"
-                      value={effectiveMonthlySpend}
-                      onChange={(e) => {
-                        const next = clampMonthlySpend(Number(e.target.value));
-                        setMonthlySpendOverride(next);
-                        setMonthlySpendInput(Math.round(next).toString());
-                      }}
-                    />
-                    <input
-                      type="number"
-                      min={monthlySpendSliderMin}
-                      max={monthlySpendSliderMax}
-                      step={monthlySpendSliderStep}
-                      className="border rounded px-2 py-1 text-sm w-full"
-                      value={monthlySpendInput}
-                      onChange={(e) => setMonthlySpendInput(e.target.value)}
-                      onBlur={() => {
-                        const parsed = Number(monthlySpendInput);
-                        if (!Number.isFinite(parsed)) {
-                          setMonthlySpendInput(Math.round(effectiveMonthlySpend).toString());
-                          return;
-                        }
-                        const next = clampMonthlySpend(parsed);
-                        setMonthlySpendOverride(next);
-                        setMonthlySpendInput(Math.round(next).toString());
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          const parsed = Number(monthlySpendInput);
-                          if (!Number.isFinite(parsed)) return;
-                          const next = clampMonthlySpend(parsed);
-                          setMonthlySpendOverride(next);
-                          setMonthlySpendInput(Math.round(next).toString());
-                        }
-                      }}
-                      title="Type to set monthly ad spend directly"
-                    />
-                    <div className="flex items-center justify-between text-xs text-gray-600">
-                      <span>Min {formatCurrency(monthlySpendSliderMin)}</span>
-                      <span>Max {formatCurrency(monthlySpendSliderMax)}</span>
-                    </div>
-                  </label>
-
-                  <label className="border rounded-lg p-3 bg-gray-50 space-y-2">
-                    <div className="flex items-center justify-between text-sm font-medium" title="Global average CPC applied to all campaigns. Slide to test cheaper or more expensive clicks.">
-                      <span>Global avg CPC (MYR)</span>
-                      <span className="text-xs font-semibold px-2 py-1 rounded bg-blue-50 text-blue-800">
-                        RM {assumptions.averageCpc.toFixed(2)}
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min={0.1}
-                      max={10}
-                      step={0.1}
-                      className="w-full accent-blue-600"
-                      value={assumptions.averageCpc}
-                      onChange={(e) => updateAssumption("averageCpc", Number(e.target.value))}
-                    />
-                    <div className="text-xs text-gray-600">
-                      Defaults to ad group avg{averageAdGroupCpc ? ` (RM ${averageAdGroupCpc.toFixed(2)})` : ""}.
-                    </div>
-                  </label>
-
-                  <label className="border rounded-lg p-3 bg-gray-50 space-y-2">
-                    <div className="flex items-center justify-between text-sm font-medium" title="Set worst and best conversion rates to bound expected performance.">
-                      <span>Conv. Rate (%)</span>
-                      <div className="flex items-center gap-2 text-xs">
-                        <span className="px-2 py-1 rounded bg-amber-50 text-amber-800 font-semibold">
-                          {assumptions.worstConversionRate.toFixed(1)}%
-                        </span>
-                        <span className="px-2 py-1 rounded bg-green-50 text-green-800 font-semibold">
-                          {assumptions.bestConversionRate.toFixed(1)}%
-                        </span>
-                      </div>
-                    </div>
-                    <div className="relative pt-2 pb-3">
-                      <div className="h-2 bg-gray-200 rounded-full relative overflow-hidden">
-                        <div
-                          className="absolute top-0 h-full rounded-full bg-gradient-to-r from-amber-300 via-blue-300 to-green-300"
-                          style={{
-                            left: `${((assumptions.worstConversionRate - 0.1) / (15 - 0.1)) * 100}%`,
-                            right: `${100 - ((assumptions.bestConversionRate - 0.1) / (15 - 0.1)) * 100}%`,
-                          }}
-                        />
-                      </div>
-                      <input
-                        type="range"
-                        min={0.1}
-                        max={15}
-                        step={0.1}
-                        className="w-full accent-amber-600 relative z-10 dual-range"
-                        value={assumptions.worstConversionRate}
-                        onChange={(e) => updateAssumption("worstConversionRate", Number(e.target.value))}
-                      />
-                      <input
-                        type="range"
-                        min={0.1}
-                        max={15}
-                        step={0.1}
-                        className="w-full accent-green-600 absolute inset-0 dual-range"
-                        value={assumptions.bestConversionRate}
-                        onChange={(e) => updateAssumption("bestConversionRate", Number(e.target.value))}
-                      />
-                      <div className="flex justify-between text-xs text-gray-600 mt-2">
-                        <span className="px-2 py-1 rounded bg-amber-50 text-amber-800">Worst</span>
-                        <span className="px-2 py-1 rounded bg-green-50 text-green-800">Best</span>
-                      </div>
-                    </div>
-                  </label>
-
-                  <label className="border rounded-lg p-3 bg-gray-50 space-y-2">
-                    <div className="flex items-center justify-between text-sm font-medium" title="Adjust value per lead (Sales Value) and set the number of active days.">
-                      <span>Sales Value (MYR)</span>
-                      <span className="text-xs font-semibold px-2 py-1 rounded bg-blue-50 text-blue-800">
-                        RM {assumptions.conversionValue.toFixed(0)}
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min={10}
-                      max={1000}
-                      step={10}
-                      className="w-full accent-blue-600"
-                      value={assumptions.conversionValue}
-                      onChange={(e) => updateAssumption("conversionValue", Number(e.target.value))}
-                    />
-                    <div className="text-xs text-gray-600">
-                      Breakeven @ worst-case ROI: {breakevenSalesValue ? formatCurrency(Math.round(breakevenSalesValue)) : "n/a"}
-                    </div>
-                  </label>
-
-                  <label className="border rounded-lg p-3 bg-gray-50 space-y-2">
-                    <div className="flex items-center justify-between text-sm font-medium" title="Number of active days the campaigns run this month.">
-                      <span>Days/month</span>
-                    </div>
-                    <select
-                      className="border rounded px-2 py-1 text-sm w-full"
-                      value={assumptions.daysPerMonth}
-                      onChange={(e) => {
-                        updateAssumption("daysPerMonth", Number(e.target.value));
-                        setMonthlySpendOverride(null);
-                      }}
-                    >
-                      {[28, 30, 31].map((day) => (
-                        <option key={day} value={day}>
-                          {day} days
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <Badge variant="secondary" className="cursor-help" title={filesTooltip}>
+                    Files
+                  </Badge>
+                  <Badge variant="warning">
+                    Tip: tables are collapsed by default. Expand to review and export each table.
+                  </Badge>
                 </div>
-
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="border rounded-lg p-3 bg-gray-50">
-                    <div className="text-xs uppercase text-gray-600" title="Sum of campaign budgets scaled by the monthly spend slider">
-                      Total monthly ad spend
-                    </div>
-                    <div className="text-2xl font-semibold">{formatCurrency(performanceTotals.totalMonthlySpend)}</div>
-                  </div>
-                  <div className="border rounded-lg p-3 bg-gray-50">
-                    <div className="text-xs uppercase text-gray-600" title="Traffic generated from the monthly spend and global CPC">
-                      Estimated clicks / month
-                    </div>
-                    <div className="text-2xl font-semibold">{formatNumber(Math.round(performanceTotals.totalEstimatedClicks))}</div>
-                  </div>
-                  <div className="border rounded-lg p-3 bg-gray-50">
-                    <div className="text-xs uppercase text-gray-600" title="Leads using worst to best conversion rate assumptions">
-                      Estimated leads / month
-                    </div>
-                    <div className="text-2xl font-semibold">
-                      {formatNumber(Math.round(performanceTotals.totalLeadsWorst))} –{" "}
-                      {formatNumber(Math.round(performanceTotals.totalLeadsBest))}
-                    </div>
-                  </div>
-
-                  <div className="md:col-span-3 border rounded-lg p-4 bg-gradient-to-r from-slate-900 via-indigo-900 to-slate-800 text-white shadow">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <div className="text-sm uppercase text-indigo-100" title="Revenue from lead volume × Sales Value">
-                          Estimated revenue / month
-                        </div>
-                        <div className="text-4xl font-extrabold tracking-tight">
-                          {formatCurrencyCompact(performanceTotals.totalRevenueWorst)} – {formatCurrencyCompact(performanceTotals.totalRevenueBest)}
-                        </div>
-                        <div className="text-xs text-indigo-100/80 mt-1">
-                          Sales value RM {assumptions.conversionValue.toFixed(0)} · Break-even @ worst: {breakevenSalesValue ? formatCurrency(Math.round(breakevenSalesValue)) : "n/a"}
+              </div>
+              <div className="w-full lg:w-80 space-y-4">
+                {websiteUrl && (
+                  <div className="rounded-lg border border-default bg-surface p-3 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-2">
+                        <Badge variant="outline">Website Context</Badge>
+                        <div className="break-all text-sm font-semibold text-slate-900 dark:text-slate-100">
+                          {websiteUrl}
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className="text-xs uppercase text-indigo-100">Earnings outlook</div>
-                        <div className="text-5xl font-black">ROI</div>
-                        <div className="text-sm text-indigo-100/80">Spend → Revenue</div>
-                      </div>
+                      <a
+                        href={websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={buttonVariants({ variant: "secondary", size: "sm" })}
+                      >
+                        Visit ↗
+                      </a>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 w-full">
-                      {[{
-                        label: "Worst",
-                        value: performanceTotals.roiWorst,
-                        revenue: performanceTotals.totalRevenueWorst,
-                        align: "text-left",
-                      }, {
-                        label: "Mid",
-                        value: performanceTotals.roiMid,
-                        revenue: performanceTotals.totalRevenueMid,
-                        align: "text-center",
-                      }, {
-                        label: "Best",
-                        value: performanceTotals.roiBest,
-                        revenue: performanceTotals.totalRevenueBest,
-                        align: "text-right",
-                      }].map((item) => {
-                        const positive = item.value >= 0;
-                        const mid = item.label === "Mid";
-                        const bg = positive ? "bg-green-100 text-green-900" : mid ? "bg-amber-100 text-amber-900" : "bg-red-100 text-red-900";
-                        return (
-                          <div
+                  </div>
+                )}
+                <div className="rounded-lg border border-default bg-surface p-3 text-sm shadow-sm">
+                  <div className="text-xs font-semibold uppercase text-muted">Initial inputs</div>
+                  {normalizedInput ? (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {[
+                        { label: "Goal", value: normalizedInput.goal },
+                        { label: "Location", value: normalizedInput.location },
+                        {
+                          label: "States",
+                          value: normalizedInput.state_list?.length ? normalizedInput.state_list.join(", ") : "",
+                        },
+                        { label: "Language", value: normalizedInput.language },
+                        {
+                          label: "Monthly ad spend",
+                          value: formatCurrency(normalizedInput.monthly_adspend_myr),
+                        },
+                      ]
+                        .filter((item) => item.value)
+                        .map((item, index) => (
+                          <Badge
                             key={item.label}
-                            className={`rounded-lg p-3 ${bg} bg-opacity-80 flex flex-col gap-2 ${item.align}`}
+                            title={`${item.label}: ${item.value}`}
+                            className={cn(
+                              "border px-2.5 py-1 text-xs font-medium",
+                              [
+                                "border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-700/60 dark:bg-sky-900/30 dark:text-sky-100",
+                                "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-700/60 dark:bg-emerald-900/30 dark:text-emerald-100",
+                                "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-700/60 dark:bg-amber-900/30 dark:text-amber-100",
+                                "border-indigo-200 bg-indigo-50 text-indigo-900 dark:border-indigo-700/60 dark:bg-indigo-900/30 dark:text-indigo-100",
+                                "border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-700/60 dark:bg-rose-900/30 dark:text-rose-100",
+                              ][index % 5],
+                            )}
                           >
-                            <div className="text-xs uppercase tracking-wide">{item.label} case</div>
-                            <div className="text-3xl font-extrabold">{formatCurrencyCompact(item.revenue)}</div>
-                            <div className="text-sm font-semibold text-black/70">
-                              ROI {formatPercent(item.value)}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <h3 className="text-lg font-semibold">Campaign breakdown</h3>
-                    <div className="text-sm text-gray-600">
-                      Sort by any column to see which campaigns drive the most traffic or revenue.
-                    </div>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm border-collapse">
-                      <thead>
-                        <tr>
-                          {(
-                            [
-                              { column: "CampaignName", label: "Campaign" },
-                              { column: "monthlySpend", label: "Monthly spend (MYR)" },
-                              { column: "estimatedClicks", label: "Estimated clicks" },
-                              { column: "leadsWorst", label: "Leads (worst)" },
-                              { column: "leadsBest", label: "Leads (best)" },
-                              { column: "revenueWorst", label: "Revenue (worst)" },
-                              { column: "revenueBest", label: "Revenue (best)" },
-                              { column: "roiWorst", label: "ROI (worst)" },
-                              { column: "roiBest", label: "ROI (best)" },
-                            ] satisfies Array<{ column: keyof PerformanceCampaignRow; label: string }>
-                          ).map(({ column, label }) => (
-                            <th key={column} className="border-b px-2 py-2 text-left whitespace-nowrap">
-                              <TableSortHeader
-                                label={label}
-                                column={column}
-                                sort={performanceSort as SortState<string>}
-                                onChange={(col) =>
-                                  setPerformanceSort(
-                                    toggleSort(performanceSort, col) as SortState<keyof PerformanceCampaignRow>,
-                                  )
-                                }
-                              />
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sortedPerformanceRows.map((row) => (
-                          <tr key={row.CampaignName} className="odd:bg-gray-50">
-                            <td className="px-2 py-2">{row.CampaignName}</td>
-                            <td className="px-2 py-2">{formatCurrency(row.monthlySpend)}</td>
-                            <td className="px-2 py-2">{formatDecimal(Math.round(row.estimatedClicks), 0)}</td>
-                            <td className="px-2 py-2">{formatDecimal(Math.round(row.leadsWorst), 0)}</td>
-                            <td className="px-2 py-2">{formatDecimal(Math.round(row.leadsBest), 0)}</td>
-                            <td className="px-2 py-2">{formatCurrencyCompact(row.revenueWorst)}</td>
-                            <td className="px-2 py-2">{formatCurrencyCompact(row.revenueBest)}</td>
-                            <td className="px-2 py-2">{formatPercent(row.roiWorst)}</td>
-                            <td className="px-2 py-2">{formatPercent(row.roiBest)}</td>
-                          </tr>
+                            <span className="sr-only">{item.label}: </span>
+                            {item.value}
+                          </Badge>
                         ))}
-                      </tbody>
-                    </table>
-                  </div>
+                      {[
+                        normalizedInput.goal,
+                        normalizedInput.location,
+                        normalizedInput.state_list?.length ? normalizedInput.state_list.join(", ") : "",
+                        normalizedInput.language,
+                        formatCurrency(normalizedInput.monthly_adspend_myr),
+                      ].every((value) => !value) && <div className="text-muted">No initial inputs set.</div>}
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-muted">Load a project to view initial inputs.</div>
+                  )}
                 </div>
+              </div>
+            </div>
+            {adTextRemovals.length > 0 && (
+              <Alert variant="warning">
+                <AlertTitle>
+                  Removed {adTextRemovals.length} ad text item(s) because they still exceeded length limits after retries.
+                </AlertTitle>
+                <AlertDescription>
+                  <ul className="list-disc list-inside mt-1 space-y-1">
+                    {adTextRemovals.slice(0, 6).map((item, idx) => (
+                      <li key={`${item.campaignName}-${item.adGroupName}-${item.adIndex}-${item.textType}-${idx}`}>
+                        {item.textType} removed from {item.campaignName} → {item.adGroupName} (Ad {item.adIndex + 1},{" "}
+                        {item.originalLength}/{item.limit} chars).
+                      </li>
+                    ))}
+                    {adTextRemovals.length > 6 && <li>And {adTextRemovals.length - 6} more…</li>}
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
+
+        <Tabs
+          value={viewMode}
+          onValueChange={(value) => setViewMode(value as ViewMode)}
+          className="space-y-4"
+        >
+          <div className="grid gap-2 md:hidden">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted">View</div>
+            <Select value={viewMode} onValueChange={(value) => setViewMode(value as ViewMode)}>
+              <SelectTrigger className="h-10 w-full rounded-full border border-default">
+                <SelectValue placeholder="Select view" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="performance">Performance calculator</SelectItem>
+                <SelectItem value="breakdown">Campaign breakdown</SelectItem>
+                <SelectItem value="tables">QA tables & exports</SelectItem>
+                <SelectItem value="playbook">Optimization Playbook</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <TabsList className="hidden flex-wrap justify-start rounded-full border border-default bg-surface-muted p-1 shadow-sm md:flex">
+            <TabsTrigger
+              value="performance"
+              className="rounded-full px-4 py-2 text-sm font-semibold text-muted transition-all duration-200 ease-out data-[state=active]:-translate-y-px data-[state=active]:scale-[1.02] data-[state=active]:bg-[var(--accent)] data-[state=active]:!text-white data-[state=active]:shadow-md"
+            >
+              Performance calculator
+            </TabsTrigger>
+            <TabsTrigger
+              value="breakdown"
+              className="rounded-full px-4 py-2 text-sm font-semibold text-muted transition-all duration-200 ease-out data-[state=active]:-translate-y-px data-[state=active]:scale-[1.02] data-[state=active]:bg-[var(--accent)] data-[state=active]:!text-white data-[state=active]:shadow-md"
+            >
+              Campaign breakdown
+            </TabsTrigger>
+            <TabsTrigger
+              value="tables"
+              className="rounded-full px-4 py-2 text-sm font-semibold text-muted transition-all duration-200 ease-out data-[state=active]:-translate-y-px data-[state=active]:scale-[1.02] data-[state=active]:bg-[var(--accent)] data-[state=active]:!text-white data-[state=active]:shadow-md"
+            >
+              QA tables & exports
+            </TabsTrigger>
+            <TabsTrigger
+              value="playbook"
+              className="rounded-full px-4 py-2 text-sm font-semibold text-muted transition-all duration-200 ease-out data-[state=active]:-translate-y-px data-[state=active]:scale-[1.02] data-[state=active]:bg-[var(--accent)] data-[state=active]:!text-white data-[state=active]:shadow-md"
+            >
+              Optimization Playbook
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent
+            value="performance"
+            className={viewSwipeDirection === "right" ? "tabs-swipe-right" : "tabs-swipe-left"}
+          >
+            <Card>
+              <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <CardTitle>Performance calculator</CardTitle>
+                  <CardDescription>
+                    Forecast clicks, leads, revenue, and ROI using 00-user-input and 10/11 campaign plan budgets.
+                  </CardDescription>
+                </div>
+                <div className="grid gap-2 text-sm sm:grid-cols-2 sm:text-right">
+                  <Card className="shadow-none border-dashed">
+                    <CardContent className="p-3">
+                      <Badge variant="secondary">Step 1 budget</Badge>
+                      <div className="text-sm font-semibold mt-1">
+                        {normalizedInput ? formatCurrency(normalizedInput.monthly_adspend_myr) : "—"}
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card className="shadow-none border-dashed">
+                    <CardContent className="p-3">
+                      <Badge variant="info">Campaign spend ×{assumptions.daysPerMonth}d</Badge>
+                      <div className="text-sm font-semibold mt-1">
+                        {formatCurrency(performanceTotals.totalMonthlySpend)}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {!campaigns.length ? (
+                  <div className="rounded-lg border border-dashed bg-muted/40 p-6 text-sm text-muted-foreground">
+                    Load a project to pull budgets from 00/11 JSON before using the calculator.
+                  </div>
+                ) : (
+                  <>
+                <Card className="shadow-sm">
+                  <CardHeader className="flex-row items-center justify-between gap-2">
+                    <CardTitle className="text-base" title="Ad spend flowing into clicks, leads, revenue, and ROI">
+                      Performance funnel
+                    </CardTitle>
+                    {mermaidError && <Badge variant="warning">{mermaidError}</Badge>}
+                  </CardHeader>
+                  <CardContent>
+                    {mermaidSvg ? (
+                      <div className="overflow-auto min-h-[260px]" dangerouslySetInnerHTML={{ __html: mermaidSvg }} />
+                    ) : (
+                      <div className="text-sm text-muted-foreground">
+                        Load budgets or adjust sliders to see the funnel.
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="space-y-1">
+                      <CardTitle className="text-base">Assumptions & inputs</CardTitle>
+                      <CardDescription>Adjust the baselines to see how spend, clicks, and ROI react.</CardDescription>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground" title="Number of active days the campaigns run this month.">
+                      <span>Days/month</span>
+                      <Select
+                        value={assumptions.daysPerMonth.toString()}
+                        onValueChange={(value) => {
+                          updateAssumption("daysPerMonth", Number(value));
+                          setMonthlySpendOverride(null);
+                        }}
+                      >
+                      <SelectTrigger className="h-8 w-full sm:w-[140px] text-sm bg-surface">
+                        <SelectValue />
+                      </SelectTrigger>
+                        <SelectContent>
+                          {[28, 30, 31].map((day) => (
+                            <SelectItem key={day} value={day.toString()}>
+                              {day} days
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                      <Card className="shadow-none border-dashed bg-muted/30">
+                        <CardContent className="p-3">
+                          <label className="flex flex-col gap-2">
+                            <div className="flex items-center justify-between text-sm font-medium" title="Model different total budgets to see how traffic, leads, and revenue scale. Defaults to your campaign budgets.">
+                              <span>Monthly ad spend (MYR)</span>
+                              <span className="text-xs font-semibold px-2 py-1 rounded bg-blue-50 text-blue-800 dark:bg-blue-900/30 dark:text-blue-100">
+                                {formatCurrency(Math.round(effectiveMonthlySpend))}
+                              </span>
+                            </div>
+                            <Slider
+                              min={monthlySpendSliderMin}
+                              max={monthlySpendSliderMax}
+                              step={monthlySpendSliderStep}
+                              value={[effectiveMonthlySpend]}
+                              onValueChange={(value) => {
+                                const nextValue = clampMonthlySpend(value[0] ?? effectiveMonthlySpend);
+                                setMonthlySpendOverride(nextValue);
+                                setMonthlySpendInput(Math.round(nextValue).toString());
+                              }}
+                            />
+                            <Input
+                              type="number"
+                              min={monthlySpendSliderMin}
+                              max={monthlySpendSliderMax}
+                              step={monthlySpendSliderStep}
+                              value={monthlySpendInput}
+                              onChange={(e) => setMonthlySpendInput(e.target.value)}
+                              onBlur={() => {
+                                const parsed = Number(monthlySpendInput);
+                                if (!Number.isFinite(parsed)) {
+                                  setMonthlySpendInput(Math.round(effectiveMonthlySpend).toString());
+                                  return;
+                                }
+                                const next = clampMonthlySpend(parsed);
+                                setMonthlySpendOverride(next);
+                                setMonthlySpendInput(Math.round(next).toString());
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  const parsed = Number(monthlySpendInput);
+                                  if (!Number.isFinite(parsed)) return;
+                                  const next = clampMonthlySpend(parsed);
+                                  setMonthlySpendOverride(next);
+                                  setMonthlySpendInput(Math.round(next).toString());
+                                }
+                              }}
+                              title="Type to set monthly ad spend directly"
+                            />
+                            <div className="flex items-center justify-between text-xs text-muted">
+                              <span>Min {formatCurrency(monthlySpendSliderMin)}</span>
+                              <span>Max {formatCurrency(monthlySpendSliderMax)}</span>
+                            </div>
+                          </label>
+                        </CardContent>
+                      </Card>
+
+                      <Card className="shadow-none border-dashed bg-muted/30">
+                        <CardContent className="p-3">
+                          <label className="flex flex-col gap-2">
+                            <div className="flex items-center justify-between text-sm font-medium" title="Global average CPC applied to all campaigns. Slide to test cheaper or more expensive clicks.">
+                              <span>Global avg CPC (MYR)</span>
+                              <span className="text-xs font-semibold px-2 py-1 rounded bg-blue-50 text-blue-800 dark:bg-blue-900/30 dark:text-blue-100">
+                                RM {assumptions.averageCpc.toFixed(2)}
+                              </span>
+                            </div>
+                            <Slider
+                              min={0.1}
+                              max={10}
+                              step={0.1}
+                              value={[assumptions.averageCpc]}
+                              onValueChange={(value) => updateAssumption("averageCpc", value[0] ?? assumptions.averageCpc)}
+                            />
+                            <div className="text-xs text-muted">
+                              Defaults to ad group avg{averageAdGroupCpc ? ` (RM ${averageAdGroupCpc.toFixed(2)})` : ""}.
+                            </div>
+                          </label>
+                        </CardContent>
+                      </Card>
+
+                      <Card className="shadow-none border-dashed bg-muted/30">
+                        <CardContent className="p-3">
+                          <label className="flex flex-col gap-2">
+                            <div className="flex items-center justify-between text-sm font-medium" title="Set worst and best conversion rates to bound expected performance.">
+                              <span>Conv. Rate (%)</span>
+                              <div className="flex items-center gap-2 text-xs">
+                                <span className="px-2 py-1 rounded bg-amber-50 text-amber-800 font-semibold dark:bg-amber-900/30 dark:text-amber-100">
+                                  {assumptions.worstConversionRate.toFixed(1)}%
+                                </span>
+                                <span className="px-2 py-1 rounded bg-green-50 text-green-800 font-semibold dark:bg-green-900/30 dark:text-green-100">
+                                  {assumptions.bestConversionRate.toFixed(1)}%
+                                </span>
+                              </div>
+                            </div>
+                            <div className="pt-2 pb-3">
+                              <Slider
+                                min={0.1}
+                                max={15}
+                                step={0.1}
+                                value={[assumptions.worstConversionRate, assumptions.bestConversionRate]}
+                                onValueChange={(value) => {
+                                  const [first, second] = value;
+                                  if (!Number.isFinite(first) || !Number.isFinite(second)) return;
+                                  const sorted = [first, second].sort((a, b) => a - b);
+                                  updateAssumption("worstConversionRate", sorted[0]);
+                                  updateAssumption("bestConversionRate", sorted[1]);
+                                }}
+                              />
+                              <div className="flex justify-between text-xs text-muted mt-2">
+                                <span className="px-2 py-1 rounded bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-100">Worst</span>
+                                <span className="px-2 py-1 rounded bg-green-50 text-green-800 dark:bg-green-900/30 dark:text-green-100">Best</span>
+                              </div>
+                            </div>
+                          </label>
+                        </CardContent>
+                      </Card>
+
+                      <Card className="shadow-none border-dashed bg-muted/30">
+                        <CardContent className="p-3">
+                          <label className="flex flex-col gap-2">
+                            <div className="flex items-center justify-between text-sm font-medium" title="Adjust value per lead (Sales Value) and set the number of active days.">
+                              <span>Sales Value (MYR)</span>
+                              <span className="text-xs font-semibold px-2 py-1 rounded bg-blue-50 text-blue-800 dark:bg-blue-900/30 dark:text-blue-100">
+                                RM {assumptions.conversionValue.toFixed(0)}
+                              </span>
+                            </div>
+                            <Slider
+                              min={10}
+                              max={1000}
+                              step={10}
+                              value={[assumptions.conversionValue]}
+                              onValueChange={(value) =>
+                                updateAssumption("conversionValue", value[0] ?? assumptions.conversionValue)
+                              }
+                            />
+                            <div className="text-xs text-muted">
+                              Breakeven @ worst-case ROI: {breakevenSalesValue ? formatCurrency(Math.round(breakevenSalesValue)) : "n/a"}
+                            </div>
+                          </label>
+                        </CardContent>
+                      </Card>
+
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Separator />
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Performance outlook</CardTitle>
+                    <CardDescription>Summary of spend, traffic, and revenue impact.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <Card className="shadow-none border-dashed bg-muted/30">
+                        <CardContent className="p-3">
+                          <div className="text-xs uppercase text-muted" title="Sum of campaign budgets scaled by the monthly spend slider">
+                            Total monthly ad spend
+                          </div>
+                          <div className="text-2xl font-semibold">{formatCurrency(performanceTotals.totalMonthlySpend)}</div>
+                        </CardContent>
+                      </Card>
+                      <Card className="shadow-none border-dashed bg-muted/30">
+                        <CardContent className="p-3">
+                          <div className="text-xs uppercase text-muted" title="Traffic generated from the monthly spend and global CPC">
+                            Estimated clicks / month
+                          </div>
+                          <div className="text-2xl font-semibold">{formatNumber(Math.round(performanceTotals.totalEstimatedClicks))}</div>
+                        </CardContent>
+                      </Card>
+                      <Card className="shadow-none border-dashed bg-muted/30">
+                        <CardContent className="p-3">
+                          <div className="text-xs uppercase text-muted" title="Leads using worst to best conversion rate assumptions">
+                            Estimated leads / month
+                          </div>
+                          <div className="text-2xl font-semibold">
+                            {formatNumber(Math.round(performanceTotals.totalLeadsWorst))} –{" "}
+                            {formatNumber(Math.round(performanceTotals.totalLeadsBest))}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    <div className="border rounded-lg p-4 bg-gradient-to-r from-slate-900 via-indigo-900 to-slate-800 text-white shadow">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <div className="text-sm uppercase text-indigo-100" title="Revenue from lead volume × Sales Value">
+                            Estimated revenue / month
+                          </div>
+                          <div className="text-4xl font-extrabold tracking-tight">
+                            {formatCurrencyCompact(performanceTotals.totalRevenueWorst)} – {formatCurrencyCompact(performanceTotals.totalRevenueBest)}
+                          </div>
+                          <div className="text-xs text-indigo-100/80 mt-1">
+                            Sales value RM {assumptions.conversionValue.toFixed(0)} · Break-even @ worst: {breakevenSalesValue ? formatCurrency(Math.round(breakevenSalesValue)) : "n/a"}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-xs uppercase text-indigo-100">Earnings outlook</div>
+                          <div className="text-5xl font-black">ROI</div>
+                          <div className="text-sm text-indigo-100/80">Spend → Revenue</div>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 w-full">
+                        {[{
+                          label: "Worst",
+                          value: performanceTotals.roiWorst,
+                          revenue: performanceTotals.totalRevenueWorst,
+                          align: "text-left",
+                        }, {
+                          label: "Mid",
+                          value: performanceTotals.roiMid,
+                          revenue: performanceTotals.totalRevenueMid,
+                          align: "text-center",
+                        }, {
+                          label: "Best",
+                          value: performanceTotals.roiBest,
+                          revenue: performanceTotals.totalRevenueBest,
+                          align: "text-right",
+                        }].map((item) => {
+                          const positive = item.value >= 0;
+                          const mid = item.label === "Mid";
+                          const bg = positive
+                            ? "bg-green-100 text-green-900 dark:bg-green-900/40 dark:text-green-100"
+                            : mid
+                              ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100"
+                              : "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-100";
+                          return (
+                            <div
+                              key={item.label}
+                              className={`rounded-lg p-3 ${bg} bg-opacity-80 flex flex-col gap-2 ${item.align}`}
+                            >
+                              <div className="text-xs uppercase tracking-wide">{item.label} case</div>
+                              <div className="text-3xl font-extrabold">{formatCurrencyCompact(item.revenue)}</div>
+                              <div className="text-sm font-semibold text-black/70 dark:text-slate-200">
+                                ROI {formatPercent(item.value)}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <CardTitle className="text-base">Campaign breakdown</CardTitle>
+                      <CardDescription>
+                        Sort by any column to see which campaigns drive the most traffic or revenue.
+                      </CardDescription>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm border-collapse">
+                        <thead>
+                          <tr>
+                            {(
+                              [
+                                { column: "CampaignName", label: "Campaign" },
+                                { column: "monthlySpend", label: "Monthly spend (MYR)" },
+                                { column: "estimatedClicks", label: "Estimated clicks" },
+                                { column: "leadsWorst", label: "Leads (worst)" },
+                                { column: "leadsBest", label: "Leads (best)" },
+                                { column: "revenueWorst", label: "Revenue (worst)" },
+                                { column: "revenueBest", label: "Revenue (best)" },
+                                { column: "roiWorst", label: "ROI (worst)" },
+                                { column: "roiBest", label: "ROI (best)" },
+                              ] satisfies Array<{ column: keyof PerformanceCampaignRow; label: string }>
+                            ).map(({ column, label }) => (
+                              <th key={column} className="border-b px-2 py-2 text-left whitespace-nowrap">
+                                <TableSortHeader
+                                  label={label}
+                                  column={column}
+                                  sort={performanceSort as SortState<string>}
+                                  onChange={(col) =>
+                                    setPerformanceSort(
+                                      toggleSort(performanceSort, col) as SortState<keyof PerformanceCampaignRow>,
+                                    )
+                                  }
+                                />
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sortedPerformanceRows.map((row) => (
+                            <tr key={row.CampaignName} className="odd:bg-gray-50 dark:odd:bg-slate-900/40">
+                              <td className="px-2 py-2">{row.CampaignName}</td>
+                              <td className="px-2 py-2">{formatCurrency(row.monthlySpend)}</td>
+                              <td className="px-2 py-2">{formatDecimal(Math.round(row.estimatedClicks), 0)}</td>
+                              <td className="px-2 py-2">{formatDecimal(Math.round(row.leadsWorst), 0)}</td>
+                              <td className="px-2 py-2">{formatDecimal(Math.round(row.leadsBest), 0)}</td>
+                              <td className="px-2 py-2">{formatCurrencyCompact(row.revenueWorst)}</td>
+                              <td className="px-2 py-2">{formatCurrencyCompact(row.revenueBest)}</td>
+                              <td className="px-2 py-2">{formatPercent(row.roiWorst)}</td>
+                              <td className="px-2 py-2">{formatPercent(row.roiBest)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
               </>
             )}
-            <style jsx global>{`
-              .dual-range {
-                pointer-events: none;
-              }
-              .dual-range::-webkit-slider-thumb {
-                pointer-events: auto;
-              }
-              .dual-range::-moz-range-thumb {
-                pointer-events: auto;
-              }
-            `}</style>
-          </section>
-        )}
+          </CardContent>
+        </Card>
+      </TabsContent>
 
-        {viewMode === "hierarchy" && (
-          <section className="bg-white border rounded-lg p-4 space-y-4 dark:border-slate-700 dark:bg-slate-900">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Campaign hierarchy</h2>
-              <button className="text-sm text-blue-700 underline dark:text-blue-300" onClick={resetSelection}>
-                Clear ad group selection
-              </button>
-            </div>
+        <TabsContent
+          value="breakdown"
+          className={viewSwipeDirection === "right" ? "tabs-swipe-right" : "tabs-swipe-left"}
+        >
+          <Card>
+            <CardHeader className="gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <CardTitle>Campaign breakdown</CardTitle>
+              <Button variant="ghost" size="sm" onClick={resetSelection}>
+                Clear selection
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-4">
             {campaigns.length === 0 && (
-              <div className="text-sm text-gray-600 dark:text-slate-300">Load a project to view campaign cards.</div>
+              <div className="text-sm text-muted">Load a project to view campaign cards.</div>
             )}
             <div className="grid md:grid-cols-[1.3fr_1fr] gap-4">
               <div className="space-y-3">
@@ -1482,7 +1878,7 @@ function CampaignVisualizerPageContent() {
                     <details
                       key={campaignIdx}
                       open={isOpen}
-                      className="border rounded-lg overflow-hidden bg-gray-50 dark:border-slate-700 dark:bg-slate-800"
+                      className="border border-default rounded-lg overflow-hidden bg-surface-muted transition-shadow transition-colors hover:border-blue-300 hover:shadow-md dark:hover:border-blue-600/60"
                       onToggle={(e) =>
                         setExpandedCampaigns((prev) => ({
                           ...prev,
@@ -1492,13 +1888,13 @@ function CampaignVisualizerPageContent() {
                     >
                       <summary className="cursor-pointer px-4 py-3 flex flex-wrap gap-3 items-center">
                         <div className="flex items-center gap-2 font-semibold">
-                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white border text-xs dark:border-slate-600 dark:bg-slate-800">
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-default bg-surface text-xs">
                             {isOpen ? "−" : "+"}
                           </span>
                           <span>{campaign.CampaignName ?? `Campaign ${campaignIdx + 1}`}</span>
                           <button
                             type="button"
-                            className={`ml-1 text-xs px-2 py-1 border rounded flex items-center gap-1 ${
+                            className={`ml-1 ${copyButtonClass} ${
                               copiedName === `campaign-${campaignIdx}`
                                 ? "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/30 dark:text-green-200 dark:border-green-700"
                                 : "dark:border-slate-600 dark:text-slate-100"
@@ -1518,39 +1914,42 @@ function CampaignVisualizerPageContent() {
                             <span>{copiedName === `campaign-${campaignIdx}` ? "Copied" : "Copy"}</span>
                           </button>
                         </div>
-                        <div className="text-xs text-gray-700 flex gap-2 flex-wrap dark:text-slate-200">
-                          <span className="px-2 py-1 rounded bg-white border dark:border-slate-600 dark:bg-slate-800">Goal: {campaign.Goal || "—"}</span>
-                          <span className="px-2 py-1 rounded bg-white border dark:border-slate-600 dark:bg-slate-800">
+                        <div className="text-xs text-muted flex gap-2 flex-wrap">
+                          <span className="px-2 py-1 rounded bg-surface border border-default">Goal: {campaign.Goal || "—"}</span>
+                          <span className="px-2 py-1 rounded bg-surface border border-default">
                             Type: {campaign.CampaignType || "—"}
                           </span>
-                          <span className="px-2 py-1 rounded bg-white border dark:border-slate-600 dark:bg-slate-800">
-                            Budget: {formatCurrency(campaign.BudgetDailyMYR)}
+                          <span className="px-2 py-1 rounded border border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-700/60 dark:bg-blue-900/30 dark:text-blue-100">
+                            Daily: {formatCurrency(campaign.BudgetDailyMYR)}
                           </span>
-                          <span className="px-2 py-1 rounded bg-white border dark:border-slate-600 dark:bg-slate-800">
+                          <span className="px-2 py-1 rounded border border-indigo-200 bg-indigo-50 text-indigo-800 dark:border-indigo-700/60 dark:bg-indigo-900/30 dark:text-indigo-100">
+                            Monthly: {formatCurrency(campaign.MonthlyBudgetMYR ?? computeMonthlyBudget(campaign.BudgetDailyMYR))}
+                          </span>
+                          <span className="px-2 py-1 rounded border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-700/60 dark:bg-amber-900/30 dark:text-amber-100">
                             tCPA: {formatCurrency(campaign.BiddingLifecycle?.Phase2_Scale?.TargetCPA_MYR ?? campaign.TargetCPAMYR)}
                           </span>
-                          <span className="px-2 py-1 rounded bg-white border dark:border-slate-600 dark:bg-slate-800">
+                          <span className="px-2 py-1 rounded bg-surface border border-default">
                             Lang: {Array.isArray(campaign.Language) ? campaign.Language.join(", ") : campaign.Language || "—"}
                           </span>
                         </div>
                       </summary>
                       <div className="px-4 pb-4 space-y-2">
-                        <div className="text-sm text-gray-700 dark:text-slate-200">
+                        <div className="text-sm text-muted">
                           {campaign.AdGroups?.length ?? 0} ad group(s) • Click to drill into Ads / Keywords / Negatives
                         </div>
                         <button
-                          className={`w-full text-left border rounded-lg p-3 hover:border-blue-400 font-medium ${
+                          className={`w-full text-left border border-default rounded-lg p-3 font-medium transition hover:border-blue-400 hover:bg-blue-50/40 hover:shadow-sm dark:hover:border-blue-500 dark:hover:bg-blue-900/10 ${
                             selectedCampaignSettings?.campaignIdx === campaignIdx
                               ? "ring-2 ring-blue-400 bg-blue-50 dark:bg-blue-900/20"
-                              : "bg-white dark:bg-slate-800"
-                          } dark:border-slate-600 dark:text-slate-100 dark:hover:border-blue-500`}
+                              : "bg-surface"
+                          } dark:hover:border-blue-500`}
                           onClick={() => {
                             setSelectedCampaignSettings({ campaignIdx });
                             setSelectedAdGroup(null);
                           }}
                         >
                           Campaign Settings
-                          <div className="text-xs text-gray-500 font-normal mt-1">
+                          <div className="text-xs text-muted font-normal mt-1">
                             Location • Bidding Strategy • Ad Schedule • Negative Keywords
                           </div>
                         </button>
@@ -1561,23 +1960,23 @@ function CampaignVisualizerPageContent() {
                             return (
                               <button
                                 key={adGroupIdx}
-                                className={`border rounded-lg bg-white text-left p-3 hover:border-blue-400 ${
+                                className={`border border-default rounded-lg bg-surface text-left p-3 transition hover:border-blue-400 hover:bg-blue-50/40 hover:shadow-sm dark:hover:border-blue-500 dark:hover:bg-blue-900/10 ${
                                   selectedAdGroup?.campaignIdx === campaignIdx &&
                                   selectedAdGroup?.adGroupIdx === adGroupIdx
                                     ? "ring-2 ring-blue-400"
                                     : ""
-                                } dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:border-blue-500`}
+                                } dark:hover:border-blue-500`}
                                 onClick={() => {
                                   setSelectedAdGroup({ campaignIdx, adGroupIdx });
                                   setSelectedCampaignSettings(null);
                                 }}
                               >
                                 <div className="font-medium">{group.AdGroupName ?? `Ad Group ${adGroupIdx + 1}`}</div>
-                                <div className="text-xs text-gray-600 flex flex-wrap gap-2 mt-1 dark:text-slate-300">
+                                <div className="text-xs text-muted flex flex-wrap gap-2 mt-1">
                                   <span className="px-2 py-1 rounded bg-blue-50 text-blue-800 dark:bg-blue-900/30 dark:text-blue-100">
                                     CPC (MYR): {formatCpc(group.DefaultMaxCPCMYR)}
                                   </span>
-                                  <span className="px-2 py-1 rounded bg-gray-100 text-gray-800 dark:bg-slate-700 dark:text-slate-100">
+                                  <span className="px-2 py-1 rounded bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-100">
                                     Keywords: {keywords.length}
                                   </span>
                                 </div>
@@ -1590,159 +1989,111 @@ function CampaignVisualizerPageContent() {
                   );
                 })}
               </div>
-              <div className="border rounded-lg bg-gray-50 p-4 h-full">
-                <div className="flex flex-col gap-3 h-full">
-                  {!selectedAdGroupData && !selectedCampaignSettingsData && (
-                    <div className="text-sm text-gray-700">
-                      Select &quot;Campaign Settings&quot; or an &quot;Ad Group&quot; on the left to view details here.
-                    </div>
-                  )}
-                  {selectedCampaignSettingsData && (
-                    <CampaignSettingsPanel
-                      campaign={selectedCampaignSettingsData}
-                      onClose={() => setSelectedCampaignSettings(null)}
-                    />
-                  )}
-                  {selectedAdGroupData ? (
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap items-center gap-3 justify-between">
-                      <div>
-                        <div className="text-xs text-gray-500">Ad Group detail</div>
-                        <div className="flex items-center gap-2 font-semibold">
-                          <span>
-                            {selectedAdGroupData.AdGroups?.[selectedAdGroup!.adGroupIdx]?.AdGroupName ?? "Ad Group"}
-                          </span>
-                          <button
-                            type="button"
-                            className={`text-xs px-2 py-1 border rounded flex items-center gap-1 ${
-                              copiedName === `adgroup-${selectedAdGroup!.campaignIdx}-${selectedAdGroup!.adGroupIdx}`
-                                ? "bg-green-100 text-green-800 border-green-300"
-                                : ""
-                            }`}
-                            onClick={() =>
-                              void copyName(
-                                selectedAdGroupData.AdGroups?.[selectedAdGroup!.adGroupIdx]?.AdGroupName ??
-                                  "Ad Group",
-                                `adgroup-${selectedAdGroup!.campaignIdx}-${selectedAdGroup!.adGroupIdx}`,
-                              )
-                            }
-                            title="Copy ad group name"
-                          >
-                            {copiedName === `adgroup-${selectedAdGroup!.campaignIdx}-${selectedAdGroup!.adGroupIdx}` ? (
-                              <CheckIcon className="w-4 h-4" />
-                            ) : (
-                              <ClipboardIcon className="w-4 h-4" />
-                            )}
-                            <span>
-                              {copiedName === `adgroup-${selectedAdGroup!.campaignIdx}-${selectedAdGroup!.adGroupIdx}`
-                                ? "Copied"
-                                : "Copy"}
-                            </span>
-                          </button>
-                        </div>
-                        <div className="text-sm text-gray-600">
-                          In campaign: {selectedAdGroupData.CampaignName} • CPC:{" "}
-                          {formatCpc(
-                            selectedAdGroupData.AdGroups?.[selectedAdGroup!.adGroupIdx]?.DefaultMaxCPCMYR ?? null,
-                          )}
-                        </div>
-                      </div>
-                      <button className="border rounded px-3 py-1 text-sm" onClick={resetSelection}>
-                        Close
-                      </button>
-                    </div>
-                    <AdGroupTabs
-                      adGroup={selectedAdGroupData.AdGroups?.[selectedAdGroup!.adGroupIdx]}
-                      targeting={selectedAdGroupData.AdGroups?.[selectedAdGroup!.adGroupIdx]?.Targeting}
-                    />
-                  </div>
-                  ) : null}
+              <div className="hidden md:block">
+                <div className="border border-default rounded-lg bg-white dark:bg-slate-900 p-4 h-full">
+                  <div className="flex flex-col gap-3 h-full">{detailContent}</div>
                 </div>
               </div>
             </div>
-          </section>
-        )}
-
-        {viewMode === "tables" && (
-          <section className="bg-white border rounded-lg p-4 space-y-4 dark:border-slate-700 dark:bg-slate-900">
-            <div className="flex flex-wrap items-center gap-3">
-              <h2 className="text-xl font-semibold text-slate-900 dark:text-white">QA tables & exports</h2>
-              <div className="flex items-center gap-2 text-sm">
-                <label className="flex items-center gap-1">
-                  <span className="text-gray-700 dark:text-slate-200">Campaign filter</span>
-                  <input
-                    className="border rounded px-2 py-1 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                    value={filters.campaign}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, campaign: e.target.value }))}
-                    placeholder="Search campaign"
-                  />
-                </label>
-                <label className="flex items-center gap-1">
-                  <span className="text-gray-700 dark:text-slate-200">Ad group filter</span>
-                  <input
-                    className="border rounded px-2 py-1 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                    value={filters.adGroup}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, adGroup: e.target.value }))}
-                    placeholder="Search ad group"
-                  />
-                </label>
-                <label className="flex items-center gap-1">
-                  <span className="text-gray-700">Match</span>
-                  <input
-                    className="border rounded px-2 py-1 w-32"
-                    value={filters.matchType}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, matchType: e.target.value }))}
-                    placeholder="Exact/Phrase"
-                  />
-                </label>
-                <label className="flex items-center gap-1">
-                  <span className="text-gray-700">Negatives</span>
-                  <select
-                    className="border rounded px-2 py-1"
-                    value={filters.negative}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, negative: e.target.value as typeof prev.negative }))}
-                  >
-                    <option value="all">All</option>
-                    <option value="normal">Normal only</option>
-                    <option value="negative">Negatives only</option>
-                  </select>
-                </label>
-                <label className="flex items-center gap-1">
-                  <span className="text-gray-700">CPC min</span>
-                  <input
-                    className="border rounded px-2 py-1 w-24"
-                    value={filters.minCpc}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, minCpc: e.target.value }))}
-                    placeholder="0"
-                  />
-                </label>
-                <label className="flex items-center gap-1">
-                  <span className="text-gray-700">CPC max</span>
-                  <input
-                    className="border rounded px-2 py-1 w-24"
-                    value={filters.maxCpc}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, maxCpc: e.target.value }))}
-                    placeholder="999"
-                  />
-                </label>
+            {(selectedAdGroupData || selectedCampaignSettingsData) && (
+              <div className="md:hidden">
+                <button
+                  type="button"
+                  aria-label="Close details"
+                  className="fixed inset-0 z-40 bg-black/40"
+                  onClick={resetSelection}
+                />
+                <div className="fixed bottom-0 left-0 right-0 z-50 max-h-[80vh] overflow-y-auto rounded-t-2xl border border-default bg-surface p-4 shadow-2xl">
+                  <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300" />
+                  {detailContent}
+                </div>
               </div>
-            </div>
+            )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent
+          value="tables"
+          className={viewSwipeDirection === "right" ? "tabs-swipe-right" : "tabs-swipe-left"}
+        >
+          <Card>
+            <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <CardTitle>QA tables & exports</CardTitle>
+                <CardDescription>
+                  Tables are collapsed by default. Expand each card to review and export individually.
+                </CardDescription>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <Button
+                  variant="outline"
+                  className="shadow-sm hover:bg-slate-200/70 dark:hover:bg-slate-700/60"
+                  onClick={() =>
+                    downloadCsv(
+                      exportAllRows,
+                      buildExportFilename(entityValue, "qa-tables.csv"),
+                      [...EXPORT_ALL_HEADERS],
+                    )
+                  }
+                  disabled={exportAllRows.length === 0}
+                >
+                  CSV
+                </Button>
+                <Button
+                  variant="success"
+                  onClick={() =>
+                    void downloadWorkbook(
+                      [
+                        {
+                          name: "Campaign Type",
+                          columns: CAMPAIGN_TABLE_COLUMNS.map((col) => col.label),
+                          rows: campaignExportRows,
+                        },
+                        {
+                          name: "Ad Group",
+                          columns: AD_GROUP_TABLE_COLUMNS.map((col) => col.label),
+                          rows: adGroupExportRows,
+                          rowStyle: applyAdGroupRowStyle,
+                        },
+                      ],
+                      buildExportFilename(entityValue, "qa-tables.xlsx"),
+                    )
+                  }
+                  disabled={campaignExportRows.length === 0 && adGroupExportRows.length === 0}
+                >
+                  Excel
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
             {campaigns.length === 0 && (
-              <div className="text-sm text-gray-600">
+              <div className="text-sm text-muted">
                 Load a project with a 10/11 JSON first to see tables and exports.
               </div>
             )}
 
             <TableCard
-              title="Campaign table"
-              note="Edit campaign attributes inline."
+              title="Media Plan"
+              note="Campaign table."
+              defaultCollapsed
               onExport={() =>
                 downloadCsv(
-                  filteredCampaigns.map(({ idx, ...rest }) => {
-                    void idx;
-                    return rest as Record<string, string | number | boolean | null>;
-                  }),
-                  "campaigns.csv",
+                  campaignExportRows,
+                  buildExportFilename(entityValue, "media-plan.csv"),
+                  CAMPAIGN_TABLE_COLUMNS.map((col) => col.label),
+                )
+              }
+              onExportExcel={() =>
+                void downloadWorkbook(
+                  [
+                    {
+                      name: "Campaign Type",
+                      columns: CAMPAIGN_TABLE_COLUMNS.map((col) => col.label),
+                      rows: campaignExportRows,
+                    },
+                  ],
+                  buildExportFilename(entityValue, "media-plan.xlsx"),
                 )
               }
             >
@@ -1750,74 +2101,31 @@ function CampaignVisualizerPageContent() {
                 <table className="w-full text-sm border-collapse">
                   <thead>
                     <tr>
-                      {(
-                        [
-                          "CampaignName",
-                          "Goal",
-                          "CampaignType",
-                          "BudgetDailyMYR",
-                          "TargetCPAMYR",
-                          "Language",
-                          "LocationSummary",
-                          "AdGroupsCount",
-                        ] satisfies Array<keyof CampaignRow>
-                      ).map((column) => (
-                        <th key={column} className="border-b px-2 py-1 text-left">
-                          <TableSortHeader
-                            label={column}
-                            column={column}
-                            sort={campaignSort as SortState<string>}
-                            onChange={(col) => setCampaignSort(toggleSort(campaignSort, col) as SortState<keyof CampaignRow>)}
-                          />
+                      {CAMPAIGN_TABLE_COLUMNS.map((column) => (
+                        <th key={column.label} className="border-b px-2 py-1 text-left font-semibold">
+                          {column.label}
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredCampaigns.map((row) => (
-                      <tr key={row.idx} className="odd:bg-gray-50">
+                    {campaignTableRows.map((row, idx) => (
+                      <tr key={`${row.campaignName}-${idx}`} className="odd:bg-gray-50 dark:odd:bg-slate-900/40">
+                        <td className="px-2 py-1">{row.platform}</td>
+                        <td className="px-2 py-1">{row.funnel}</td>
                         <td className="px-2 py-1">
                           <EditableCell
-                            value={row.CampaignName}
-                            onChange={(val) => updateCampaign(row.idx, { CampaignName: String(val ?? "") })}
+                            value={row.entity}
+                            onChange={(val) => setEntityOverride(String(val ?? ""))}
+                            placeholder="Project ID"
                           />
                         </td>
-                        <td className="px-2 py-1">
-                          <EditableCell
-                            value={row.Goal}
-                            onChange={(val) => updateCampaign(row.idx, { Goal: String(val ?? "") })}
-                          />
-                        </td>
-                        <td className="px-2 py-1">
-                          <EditableCell
-                            value={row.CampaignType}
-                            onChange={(val) => updateCampaign(row.idx, { CampaignType: String(val ?? "") })}
-                          />
-                        </td>
-                        <td className="px-2 py-1">
-                          <EditableCell
-                            value={row.BudgetDailyMYR}
-                            type="number"
-                            onChange={(val) => updateCampaign(row.idx, { BudgetDailyMYR: val as number | null })}
-                          />
-                        </td>
-                        <td className="px-2 py-1">
-                          <EditableCell
-                            value={row.TargetCPAMYR}
-                            type="number"
-                            onChange={(val) => updateCampaign(row.idx, { TargetCPAMYR: val as number | null })}
-                          />
-                        </td>
-                        <td className="px-2 py-1">
-                          <EditableCell
-                            value={row.Language}
-                            onChange={(val) => updateCampaign(row.idx, { Language: String(val ?? "").split(",").map(s => s.trim()).filter(Boolean) })}
-                          />
-                        </td>
-                        <td className="px-2 py-1 text-gray-600">
-                          {row.LocationSummary}
-                        </td>
-                        <td className="px-2 py-1 text-center">{row.AdGroupsCount}</td>
+                        <td className="px-2 py-1">{row.campaignName}</td>
+                        <td className="px-2 py-1">{row.campaignType}</td>
+                        <td className="px-2 py-1">{row.objective}</td>
+                        <td className="px-2 py-1">{row.keywordsAudience}</td>
+                        <td className="px-2 py-1">{formatCurrency(row.monthlyBudgetMYR)}</td>
+                        <td className="px-2 py-1">{row.landingPageUrl}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1826,16 +2134,27 @@ function CampaignVisualizerPageContent() {
             </TableCard>
 
             <TableCard
-              title="Ad Group table"
-              note="Check CPCs, ads, and keyword coverage."
+              title="Ad Group"
+              note="Headlines, descriptions, and keywords per ad group."
+              defaultCollapsed
               onExport={() =>
                 downloadCsv(
-                  filteredAdGroups.map(({ campaignIdx, idx, ...rest }) => {
-                    void campaignIdx;
-                    void idx;
-                    return rest as Record<string, string | number | boolean | null>;
-                  }),
-                  "ad-groups.csv",
+                  adGroupExportRows,
+                  buildExportFilename(entityValue, "ad-group.csv"),
+                  AD_GROUP_TABLE_COLUMNS.map((col) => col.label),
+                )
+              }
+              onExportExcel={() =>
+                void downloadWorkbook(
+                  [
+                    {
+                      name: "Ad Group",
+                      columns: AD_GROUP_TABLE_COLUMNS.map((col) => col.label),
+                      rows: adGroupExportRows,
+                      rowStyle: applyAdGroupRowStyle,
+                    },
+                  ],
+                  buildExportFilename(entityValue, "ad-group.xlsx"),
                 )
               }
             >
@@ -1843,315 +2162,391 @@ function CampaignVisualizerPageContent() {
                 <table className="w-full text-sm border-collapse">
                   <thead>
                     <tr>
-                      {([
-                        { key: "CampaignName", label: "CampaignName" },
-                        { key: "AdGroupName", label: "AdGroupName" },
-                        { key: "DefaultMaxCPCMYR", label: "CPC (MYR)" },
-                        { key: "KeywordsCount", label: "KeywordsCount" },
-                        { key: "NegativeKeywordsCount", label: "NegativeKeywordsCount" },
-                        { key: "ResponsiveSearchAdsCount", label: "ResponsiveSearchAdsCount" },
-                      ] as const).map(({ key, label }) => (
-                        <th key={key} className="border-b px-2 py-1 text-left">
-                          <TableSortHeader
-                            label={label}
-                            column={key}
-                            sort={adGroupSort as SortState<string>}
-                            onChange={(col) => setAdGroupSort(toggleSort(adGroupSort, col) as SortState<keyof AdGroupRow>)}
-                          />
+                      {AD_GROUP_TABLE_COLUMNS.map((column) => (
+                        <th key={column.label} className="border-b px-2 py-1 text-left font-semibold">
+                          {column.label}
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredAdGroups.map((row) => (
-                      <tr key={`${row.campaignIdx}-${row.idx}`} className="odd:bg-gray-50">
-                        <td className="px-2 py-1">{row.CampaignName}</td>
-                        <td className="px-2 py-1">
-                          <EditableCell
-                            value={row.AdGroupName}
-                            onChange={(val) => updateAdGroup(row.campaignIdx, row.idx, { AdGroupName: String(val ?? "") })}
-                          />
-                        </td>
-                        <td className="px-2 py-1">
-                          <EditableCell
-                            value={row.DefaultMaxCPCMYR}
-                            type="number"
-                            onChange={(val) => updateAdGroup(row.campaignIdx, row.idx, { DefaultMaxCPCMYR: val as number | null })}
-                          />
-                        </td>
-                        <td className="px-2 py-1 text-center">{row.KeywordsCount}</td>
-                        <td className="px-2 py-1 text-center">{row.NegativeKeywordsCount}</td>
-                        <td className="px-2 py-1 text-center">{row.ResponsiveSearchAdsCount}</td>
+                    {adGroupTableRows.map((row, idx) => (
+                      <tr key={`${row.name}-${row.type}-${idx}`} className="odd:bg-gray-50 dark:odd:bg-slate-900/40">
+                        <td className="px-2 py-1">{row.campaignName}</td>
+                        <td className="px-2 py-1">{row.name}</td>
+                        <td className="px-2 py-1">{row.text}</td>
+                        <td className="px-2 py-1">{row.character ?? ""}</td>
+                        <td className="px-2 py-1">{row.type}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             </TableCard>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-            <TableCard
-              title="Keyword table"
-              note="Toggle Normal/Negative, filter by campaign or match type, and export."
-              onExport={() =>
-                downloadCsv(
-                  filteredKeywords.map(({ campaignIdx, adGroupIdx, index, adGroupCpc, ...rest }) => {
-                    void campaignIdx;
-                    void adGroupIdx;
-                    void index;
-                    void adGroupCpc;
-                    return rest as Record<string, string | number | boolean | null>;
-                  }),
-                  "keywords.csv",
-                )
-              }
-            >
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm border-collapse">
-                  <thead>
-                    <tr>
-                      {([
-                        { key: "CampaignName", label: "CampaignName" },
-                        { key: "AdGroupName", label: "AdGroupName" },
-                        { key: "Keyword", label: "Keyword" },
-                        { key: "MatchType", label: "MatchType" },
-                        { key: "IsNegative", label: "IsNegative" },
-                        { key: "AvgMonthlySearches", label: "AvgMonthlySearches" },
-                        { key: "CPC", label: "CPC (MYR)" },
-                        { key: "CompetitionIndex", label: "CompetitionIndex" },
-                        { key: "AdGroupCPC", label: "AdGroupCPC (MYR)" },
-                      ] as const).map(({ key, label }) => (
-                        <th key={key} className="border-b px-2 py-1 text-left">
-                          <TableSortHeader
-                            label={label}
-                            column={key}
-                            sort={keywordSort as SortState<string>}
-                            onChange={(col) => setKeywordSort(toggleSort(keywordSort, col) as SortState<keyof KeywordRow>)}
-                          />
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredKeywords.map((row) => (
-                      <tr key={`${row.campaignIdx}-${row.adGroupIdx}-${row.index}-${row.IsNegative}`} className="odd:bg-gray-50">
-                <td className="px-2 py-1">{row.CampaignName}</td>
-                <td className="px-2 py-1">{row.AdGroupName}</td>
-                <td className="px-2 py-1">
-                  <EditableCell
-                            value={row.Keyword}
-                            onChange={(val) => updateKeywordRow(row, { keyword: String(val ?? "") })}
-                          />
-                        </td>
-                        <td className="px-2 py-1">
-                          <EditableCell
-                            value={row.MatchType}
-                            onChange={(val) => updateKeywordRow(row, { matchType: String(val ?? "") })}
-                          />
-                        </td>
-                        <td className="px-2 py-1">
-                          <button
-                            className={`px-2 py-1 rounded text-xs ${
-                              row.IsNegative ? "bg-amber-100 text-amber-800" : "bg-green-100 text-green-800"
-                            }`}
-                            onClick={() => updateKeywordRow(row, { negative: !row.IsNegative })}
-                          >
-                            {row.IsNegative ? "Negative" : "Normal"}
-                          </button>
-                        </td>
-                        <td className="px-2 py-1">{formatNumber(row.AvgMonthlySearches)}</td>
-                        <td className="px-2 py-1">{formatCpc(row.CPC)}</td>
-                        <td className="px-2 py-1">{row.CompetitionIndex ?? "—"}</td>
-                        <td className="px-2 py-1">{formatCpc(row.AdGroupCPC)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-blue-50 font-medium">
-              <td className="px-2 py-2 text-right" colSpan={5}>
-                Averages (visible)
-              </td>
-              <td className="px-2 py-2">{formatNumber(keywordAverages.avgMonthlySearches ?? null)}</td>
-              <td className="px-2 py-2">{formatCurrency(keywordAverages.avgCpc ?? null)}</td>
-              <td className="px-2 py-2">{formatDecimal(keywordAverages.avgCompetition ?? null)}</td>
-              <td className="px-2 py-2" />
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-                </TableCard>
-              </section>
-            )}
-    
-            {viewMode === "playbook" && (
-              <section className="space-y-6">
-                <div className="flex flex-col gap-2">
-                  <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Optimization Playbook</h2>
-                  <p className="text-sm text-gray-600 dark:text-slate-300">
-                    Your generated manual for managing these campaigns after launch.
-                  </p>
-                </div>
+        <TabsContent
+          value="playbook"
+          className={viewSwipeDirection === "right" ? "tabs-swipe-right" : "tabs-swipe-left"}
+        >
+          <section className="space-y-6">
+            <div className="flex flex-col gap-2">
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Optimization Playbook</h2>
+              <p className="text-sm text-muted">
+                Your generated manual for managing these campaigns after launch.
+              </p>
+            </div>
     
                 {!optimizationPlaybook ? (
-                  <div className="bg-white border rounded-lg p-8 text-center text-gray-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                  <div className="bg-surface border border-default rounded-lg p-8 text-center text-muted">
                     <p>No optimization playbook found in the project data.</p>
                     <p className="text-sm mt-2">Make sure you have run the latest pipeline step that generates this data.</p>
                   </div>
                 ) : (
-                  <>
-                    {/* Financial North Star Scorecard */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="bg-white border-l-4 border-l-blue-500 rounded-lg p-6 shadow-sm dark:bg-slate-900 dark:border-slate-700">
-                        <div className="text-sm font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wide">
-                          Target Cost Per Lead
-                        </div>
-                        <div className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">
-                          {formatCurrency(optimizationPlaybook.Metrics_Benchmarks.Target_CPL_MYR)}
-                        </div>
-                        <div className="mt-1 text-sm text-gray-600 dark:text-slate-400">
-                          Ideal average cost. Maintain this for profitability.
-                        </div>
+                  <Tabs defaultValue="scorecard" className="space-y-6">
+                    <TabsList className="w-full flex-wrap justify-start rounded-full border border-default bg-surface-muted px-2 py-1 text-muted">
+                      <TabsTrigger
+                        value="scorecard"
+                        className="rounded-full px-4 text-sm font-semibold data-[state=active]:bg-[var(--accent)] data-[state=active]:!text-white data-[state=active]:shadow-md"
+                      >
+                        Scorecard
+                      </TabsTrigger>
+                      <TabsTrigger
+                        value="rules"
+                        className="rounded-full px-4 text-sm font-semibold data-[state=active]:bg-[var(--accent)] data-[state=active]:!text-white data-[state=active]:shadow-md"
+                      >
+                        Rules
+                      </TabsTrigger>
+                      <TabsTrigger
+                        value="tracking"
+                        className="rounded-full px-4 text-sm font-semibold data-[state=active]:bg-[var(--accent)] data-[state=active]:!text-white data-[state=active]:shadow-md"
+                      >
+                        Tracking
+                      </TabsTrigger>
+                    </TabsList>
+
+                    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
+                      <div className="space-y-6">
+                        <TabsContent value="scorecard" className="mt-0 space-y-4">
+                          <div className="grid gap-4 md:grid-cols-2">
+                            <Card className="border-l-4 border-l-blue-500">
+                              <CardHeader className="space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <CardTitle className="text-sm uppercase tracking-wide text-muted">
+                                    Target Cost Per Lead
+                                  </CardTitle>
+                                  <Badge variant="info">Healthy</Badge>
+                                </div>
+                                <div className="text-3xl font-bold text-slate-900 dark:text-white">
+                                  {formatCurrency(optimizationPlaybook.Metrics_Benchmarks.Target_CPL_MYR)}
+                                </div>
+                              </CardHeader>
+                              <CardContent className="text-sm text-muted">
+                                Ideal average cost. Maintain this for profitability.
+                              </CardContent>
+                            </Card>
+
+                            <Card className="border-l-4 border-l-red-500">
+                              <CardHeader className="space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <CardTitle className="text-sm uppercase tracking-wide text-muted">
+                                    Max CPL Ceiling
+                                  </CardTitle>
+                                  <Badge variant="warning">Danger Zone</Badge>
+                                </div>
+                                <div className="text-3xl font-bold text-slate-900 dark:text-white">
+                                  {formatCurrency(optimizationPlaybook.Metrics_Benchmarks.Max_CPL_Ceiling_MYR)}
+                                </div>
+                              </CardHeader>
+                              <CardContent className="text-sm text-muted">
+                                Pause ads or intervene if cost exceeds this ceiling.
+                              </CardContent>
+                            </Card>
+                          </div>
+
+                          <Alert variant="warning" className="flex flex-col gap-2">
+                            <AlertTitle>Primary guardrail</AlertTitle>
+                            <AlertDescription>
+                              Keep CPL between the target and the ceiling. If trends move upward for 2+ checks in a row,
+                              pause underperformers and reassess keyword quality.
+                            </AlertDescription>
+                          </Alert>
+                        </TabsContent>
+
+                        <TabsContent value="rules" className="mt-0">
+                          <Card className="border-default">
+                            <CardHeader className="space-y-1">
+                              <CardTitle className="text-lg">Rules of Engagement</CardTitle>
+                              <CardDescription>Expand each rule to see the condition, action, and rationale.</CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                              <Accordion type="multiple" className="rounded-lg border border-default">
+                                {optimizationPlaybook.Rules_Of_Engagement.map((rule, idx) => (
+                                  <AccordionItem key={`${rule.RuleName}-${idx}`} value={`rule-${idx}`} className="px-4">
+                                    <AccordionTrigger className="gap-3">
+                                      <div className="flex items-center gap-3">
+                                        <span className="text-base font-semibold text-slate-900 dark:text-white">
+                                          {rule.RuleName}
+                                        </span>
+                                        <Badge variant="info">{rule.Frequency}</Badge>
+                                      </div>
+                                    </AccordionTrigger>
+                                    <AccordionContent>
+                                      <div className="space-y-4">
+                                        <div>
+                                          <div className="text-xs font-semibold uppercase tracking-wide text-muted mb-2">
+                                            IF (Condition)
+                                          </div>
+                                          <div className="rounded-lg border border-amber-100 bg-amber-50 p-3 text-sm font-medium text-slate-800 dark:border-amber-900/30 dark:bg-amber-900/20 dark:text-slate-200">
+                                            {rule.Condition}
+                                          </div>
+                                        </div>
+                                        <div>
+                                          <div className="text-xs font-semibold uppercase tracking-wide text-muted mb-2">
+                                            THEN (Action)
+                                          </div>
+                                          <div className="text-sm text-slate-700 dark:text-slate-200">
+                                            {rule.Action}
+                                          </div>
+                                        </div>
+                                        <Alert className="bg-slate-50 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                          <AlertTitle>Why it matters</AlertTitle>
+                                          <AlertDescription>{rule.Rationale}</AlertDescription>
+                                        </Alert>
+                                      </div>
+                                    </AccordionContent>
+                                  </AccordionItem>
+                                ))}
+                              </Accordion>
+                            </CardContent>
+                          </Card>
+                        </TabsContent>
+
+                        <TabsContent value="tracking" className="mt-0">
+                          <Card>
+                            <CardHeader className="flex flex-row items-start gap-3">
+                              <div className="mt-0.5 rounded-lg bg-blue-100 p-2 text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  width="20"
+                                  height="20"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                                </svg>
+                              </div>
+                              <div className="space-y-1">
+                                <CardTitle>Tracking Setup Guide</CardTitle>
+                                <CardDescription>
+                                  Apply a Final URL Suffix at the account level to standardize attribution.
+                                </CardDescription>
+                              </div>
+                            </CardHeader>
+                            <CardContent className="space-y-6">
+                              <Alert className="bg-slate-50 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                <AlertTitle>Tip</AlertTitle>
+                                <AlertDescription>
+                                  This suffix will automatically append UTM tags to every ad click, so you only set it once.
+                                </AlertDescription>
+                              </Alert>
+
+                              <div className="grid gap-6 md:grid-cols-2">
+                                <div className="space-y-3">
+                                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+                                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                      1
+                                    </span>
+                                    Step-by-step configuration
+                                  </div>
+                                  <ol className="space-y-2 text-sm text-muted">
+                                    <li>Log in to your Google Ads account.</li>
+                                    <li>Open Admin (gear icon) &gt; Account settings.</li>
+                                    <li>Expand the Tracking section.</li>
+                                    <li>Paste the Final URL suffix string.</li>
+                                    <li>Save changes.</li>
+                                  </ol>
+                                </div>
+
+                                <div className="space-y-3">
+                                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+                                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                      2
+                                    </span>
+                                    The string to paste
+                                  </div>
+                                  <div className="relative rounded-lg border border-slate-700 bg-slate-900 p-4 text-sm text-slate-200 font-mono break-all">
+                                    utm_source=google&utm_medium=cpc&utm_campaign={'{campaignid}'}&utm_content={'{adgroupid}'}&utm_term={'{keyword}'}
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => void copyName("utm_source=google&utm_medium=cpc&utm_campaign={campaignid}&utm_content={adgroupid}&utm_term={keyword}", "tracking-string")}
+                                      className="absolute right-3 top-3 h-7 w-7 p-0 text-slate-200 hover:bg-slate-800"
+                                      title="Copy to clipboard"
+                                    >
+                                      {copiedName === "tracking-string" ? (
+                                        <CheckIcon className="h-4 w-4 text-green-300" />
+                                      ) : (
+                                        <ClipboardIcon className="h-4 w-4" />
+                                      )}
+                                    </Button>
+                                  </div>
+                                  <p className="text-xs text-muted">
+                                    This string auto-inserts the campaign ID, ad group ID, and keyword that triggered the ad.
+                                  </p>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </TabsContent>
                       </div>
-    
-                      <div className="bg-white border-l-4 border-l-red-500 rounded-lg p-6 shadow-sm dark:bg-slate-900 dark:border-slate-700">
-                        <div className="text-sm font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wide">
-                          Max CPL Ceiling
-                        </div>
-                        <div className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">
-                          {formatCurrency(optimizationPlaybook.Metrics_Benchmarks.Max_CPL_Ceiling_MYR)}
-                        </div>
-                        <div className="mt-1 text-sm text-gray-600 dark:text-slate-400">
-                          The &quot;Danger Zone&quot;. Pause ads or intervene if cost exceeds this.
-                        </div>
-                      </div>
-                    </div>
-    
-                    {/* Rules of Engagement Grid */}
-                    <div className="space-y-4">
-                      <h3 className="text-lg font-medium text-slate-900 dark:text-white">Rules of Engagement</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {optimizationPlaybook.Rules_Of_Engagement.map((rule, idx) => (
-                          <div
-                            key={idx}
-                            className="bg-white border rounded-xl overflow-hidden shadow-sm flex flex-col hover:shadow-md transition-shadow dark:bg-slate-900 dark:border-slate-700"
-                          >
-                            <div className="p-5 border-b bg-gray-50 dark:bg-slate-800 dark:border-slate-700">
-                              <div className="flex justify-between items-start gap-2">
-                                <h4 className="font-bold text-slate-900 dark:text-white text-lg leading-tight">
-                                  {rule.RuleName}
-                                </h4>
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200 whitespace-nowrap">
-                                  {rule.Frequency}
+
+                      <aside className="space-y-4 lg:sticky lg:top-24">
+                        <Card>
+                          <CardHeader className="space-y-1">
+                            <CardTitle className="text-base">Quick Reference</CardTitle>
+                            <CardDescription>Keep these guardrails visible while you work.</CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-4 text-sm">
+                            <div className="space-y-2">
+                              <p className="text-xs uppercase tracking-wide text-muted">Targets</p>
+                              <div className="flex items-center justify-between">
+                                <span>Target CPL</span>
+                                <span className="font-semibold text-slate-900 dark:text-white">
+                                  {formatCurrency(optimizationPlaybook.Metrics_Benchmarks.Target_CPL_MYR)}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span>Max CPL</span>
+                                <span className="font-semibold text-slate-900 dark:text-white">
+                                  {formatCurrency(optimizationPlaybook.Metrics_Benchmarks.Max_CPL_Ceiling_MYR)}
                                 </span>
                               </div>
                             </div>
-                            <div className="p-5 flex-1 flex flex-col gap-4">
-                              <div>
-                                <div className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-1">
-                                  IF (Condition)
-                                </div>
-                                <div className="text-sm text-slate-800 dark:text-slate-200 font-medium bg-amber-50 dark:bg-amber-900/20 p-2 rounded border border-amber-100 dark:border-amber-900/30">
-                                  {rule.Condition}
-                                </div>
-                              </div>
-                              <div>
-                                <div className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-1">
-                                  THEN (Action)
-                                </div>
-                                <div className="text-sm text-slate-800 dark:text-slate-200">
-                                  {rule.Action}
-                                </div>
+                            <Separator />
+                            <div className="space-y-2">
+                              <p className="text-xs uppercase tracking-wide text-muted">Review cadence</p>
+                              <div className="flex flex-wrap gap-2">
+                                {playbookFrequencies.length ? (
+                                  playbookFrequencies.map((frequency) => (
+                                    <Badge key={frequency} variant="secondary">
+                                      {frequency}
+                                    </Badge>
+                                  ))
+                                ) : (
+                                  <Badge variant="secondary">Not set</Badge>
+                                )}
                               </div>
                             </div>
-                            <div className="p-4 bg-gray-50 text-xs text-gray-600 border-t dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700">
-                              <span className="font-semibold">Why:</span> {rule.Rationale}
+                            <Separator />
+                            <div className="space-y-2">
+                              <p className="text-xs uppercase tracking-wide text-muted">Rules count</p>
+                              <div className="flex items-center justify-between">
+                                <span>Total rules</span>
+                                <Badge variant="info">{optimizationPlaybook.Rules_Of_Engagement.length}</Badge>
+                              </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
+                          </CardContent>
+                        </Card>
+                      </aside>
                     </div>
-
-                    {/* Tracking Setup Guide */}
-                    <section className="bg-white border rounded-lg p-6 space-y-4 dark:border-slate-700 dark:bg-slate-900 mt-8">
-                      <div className="flex items-center gap-2">
-                        <div className="p-2 bg-blue-100 text-blue-700 rounded-lg dark:bg-blue-900/30 dark:text-blue-300">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-                        </div>
-                        <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Tracking Setup Guide</h2>
-                      </div>
-                      
-                      <div className="prose prose-sm max-w-none text-gray-600 dark:text-slate-300">
-                        <p>
-                          To ensure accurate attribution in Google Analytics and other tools, we recommend setting up a <strong>Final URL Suffix</strong> at the account level. This automatically appends tracking parameters to all your ads.
-                        </p>
-                      </div>
-
-                      <div className="grid md:grid-cols-2 gap-6 mt-4">
-                        <div className="space-y-3">
-                          <h3 className="font-medium text-slate-900 dark:text-white flex items-center gap-2">
-                            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-xs font-bold dark:bg-slate-800 dark:text-slate-400">1</span>
-                            Step-by-Step Configuration
-                          </h3>
-                          <ol className="list-decimal list-inside space-y-2 text-sm text-gray-600 ml-2 dark:text-slate-300">
-                            <li>Log in to your <strong>Google Ads account</strong>.</li>
-                            <li>In the left-hand menu, click on <strong>Admin</strong> (the gear icon <span className="inline-block align-middle"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></span>). <br/><span className="text-xs text-gray-500 italic ml-4">Note: In some older views, this might be under &quot;Settings&quot; &gt; &quot;Account Settings&quot;.</span></li>
-                            <li>Click on <strong>Account settings</strong>.</li>
-                            <li>Scroll down and click to expand the <strong>Tracking</strong> section.</li>
-                            <li>Find the field labeled <strong>Final URL suffix</strong>.</li>
-                            <li>Paste the &quot;Golden Standard&quot; string (on the right) into that box.</li>
-                            <li>Click <strong>Save</strong>.</li>
-                          </ol>
-                        </div>
-
-                        <div className="space-y-3">
-                          <h3 className="font-medium text-slate-900 dark:text-white flex items-center gap-2">
-                            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-xs font-bold dark:bg-slate-800 dark:text-slate-400">2</span>
-                            The String to Paste
-                          </h3>
-                          <div className="bg-slate-800 rounded-lg p-4 text-slate-200 text-sm font-mono break-all relative group">
-                            utm_source=google&utm_medium=cpc&utm_campaign={'{campaignid}'}&utm_content={'{adgroupid}'}&utm_term={'{keyword}'}
-                            <button
-                              onClick={() => void copyName("utm_source=google&utm_medium=cpc&utm_campaign={campaignid}&utm_content={adgroupid}&utm_term={keyword}", "tracking-string")}
-                              className="absolute top-2 right-2 p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity"
-                              title="Copy to clipboard"
-                            >
-                              {copiedName === "tracking-string" ? (
-                                <CheckIcon className="w-4 h-4 text-green-400" />
-                              ) : (
-                                <ClipboardIcon className="w-4 h-4" />
-                              )}
-                            </button>
-                          </div>
-                          <p className="text-xs text-gray-500 dark:text-slate-400">
-                            This string dynamically populates the campaign ID, ad group ID, and keyword that triggered the ad.
-                          </p>
-                        </div>
-                      </div>
-                    </section>
-                  </>
+                  </Tabs>
                 )}
               </section>
-            )}
+        </TabsContent>
+      </Tabs>
 
           </div>
         </main>
       );
     }
-function TableCard({ title, children, note, onExport }: { title: string; children: ReactNode; note?: string; onExport?: () => void }) {
+function TableCard({
+  title,
+  children,
+  note,
+  onExport,
+  onExportExcel,
+  defaultCollapsed = false,
+}: {
+  title: string;
+  children: ReactNode;
+  note?: string;
+  onExport?: () => void;
+  onExportExcel?: () => void;
+  defaultCollapsed?: boolean;
+}) {
+  const [isOpen, setIsOpen] = useState(!defaultCollapsed);
+  const toggleOpen = () => setIsOpen((prev) => !prev);
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      toggleOpen();
+    }
+  };
   return (
-    <div className="border rounded-lg p-3 space-y-2">
-      <div className="flex items-center justify-between">
+    <Card className="group transition-shadow hover:shadow-md">
+      <CardHeader
+        className="gap-2 sm:flex-row sm:items-center sm:justify-between cursor-pointer select-none transition-colors group-hover:bg-slate-50 dark:group-hover:bg-slate-900/40"
+        onClick={toggleOpen}
+        onKeyDown={handleKeyDown}
+        role="button"
+        tabIndex={0}
+        aria-expanded={isOpen}
+      >
         <div>
-          <div className="font-semibold">{title}</div>
-          {note && <div className="text-xs text-gray-600">{note}</div>}
+          <CardTitle className="text-base">{title}</CardTitle>
+          {note && <CardDescription>{note}</CardDescription>}
         </div>
-        {onExport && (
-          <button className="border rounded px-3 py-1 text-sm" onClick={onExport}>
-            Export CSV
-          </button>
-        )}
-      </div>
-      {children}
-    </div>
+        <div className="flex items-center gap-2">
+          {onExport && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="shadow-sm hover:bg-slate-200/70 dark:hover:bg-slate-700/60"
+              onClick={(event) => {
+                event.stopPropagation();
+                onExport();
+              }}
+            >
+              CSV
+            </Button>
+          )}
+          {onExportExcel && (
+            <Button
+              variant="success"
+              size="sm"
+              onClick={(event) => {
+                event.stopPropagation();
+                onExportExcel();
+              }}
+            >
+              Excel
+            </Button>
+          )}
+          <div
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-default bg-surface text-muted shadow-sm"
+            title={isOpen ? "Click to collapse" : "Click to expand"}
+          >
+            <svg
+              className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`}
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            >
+              <path d="M5 8l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+        </div>
+      </CardHeader>
+      {isOpen ? <CardContent>{children}</CardContent> : null}
+    </Card>
   );
 }
 
@@ -2219,40 +2614,40 @@ function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; 
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <div className="text-xs text-gray-500">Campaign Settings</div>
+          <div className="text-xs text-muted">Campaign Settings</div>
           <div className="font-semibold text-lg">{campaign.CampaignName}</div>
         </div>
-        <button className="border rounded px-3 py-1 text-sm" onClick={onClose}>
+        <Button variant="outline" size="sm" onClick={onClose}>
           Close
-        </button>
+        </Button>
       </div>
 
       <div className="space-y-3">
         <div className="font-medium border-b pb-1">Location Targeting</div>
         <div className="text-sm space-y-2">
           <div className="flex items-center gap-2">
-            <span className="text-gray-500">Method:</span>
+            <span className="text-muted">Method:</span>
             <span className="font-medium px-2 py-0.5 rounded bg-purple-50 text-purple-800 dark:bg-purple-900/30 dark:text-purple-200">
               {campaign.Location?.TargetingMethod || "—"}
             </span>
           </div>
           
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="border rounded bg-gray-50 p-2 dark:bg-slate-800 dark:border-slate-700">
-              <div className="text-xs font-semibold text-gray-500 mb-2">Included ({campaign.Location?.Included?.length ?? 0})</div>
+            <div className="border border-default rounded bg-surface-muted p-2">
+              <div className="text-xs font-semibold text-muted mb-2">Included ({campaign.Location?.Included?.length ?? 0})</div>
               {campaign.Location?.Included?.length ? (
-                <ul className="list-disc list-inside space-y-1 text-gray-700 dark:text-slate-200">
+                <ul className="list-disc list-inside space-y-1 text-muted">
                   {campaign.Location.Included.map((loc, i) => (
                     <li key={i}>
                       {loc.Name}
                       {typeof loc.RadiusKm === "number" && (
-                        <span className="text-gray-500 ml-1">({loc.RadiusKm} km)</span>
+                        <span className="text-muted ml-1">({loc.RadiusKm} km)</span>
                       )}
                     </li>
                   ))}
                 </ul>
               ) : (
-                <div className="text-gray-400 italic">None</div>
+                <div className="text-muted italic">None</div>
               )}
             </div>
             
@@ -2290,8 +2685,8 @@ function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; 
               </div>
             )}
             {BiddingLifecycle.Switch_Condition && (
-              <div className="bg-gray-50 p-3 rounded border border-gray-200 flex flex-col justify-center items-center text-center dark:bg-slate-700 dark:border-slate-600">
-                <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Switch Condition</div>
+              <div className="bg-surface-muted p-3 rounded border border-default flex flex-col justify-center items-center text-center">
+                <div className="text-xs text-muted uppercase tracking-wide mb-1">Switch Condition</div>
                 <div className="font-medium">
                   {BiddingLifecycle.Switch_Condition.Metric} &ge; {BiddingLifecycle.Switch_Condition.Threshold}
                 </div>
@@ -2312,7 +2707,7 @@ function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; 
             )}
           </div>
         ) : (
-          <div className="text-sm text-gray-500">No bidding lifecycle data.</div>
+          <div className="text-sm text-muted">No bidding lifecycle data.</div>
         )}
       </div>
 
@@ -2320,9 +2715,9 @@ function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; 
         <div className="font-medium border-b pb-1 flex items-center justify-between">
           <span>Ad Schedule (Dayparting)</span>
           <div className="flex items-center gap-2 text-xs font-normal">
-            <span className="flex items-center gap-1"><span className="w-3 h-3 bg-gray-200 border rounded-sm"></span> 0%</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 bg-green-200 border rounded-sm"></span> +Adj</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 bg-red-200 border rounded-sm"></span> -Adj</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 bg-slate-200 border border-default rounded-sm dark:bg-slate-700"></span> 0%</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 bg-green-200 border border-default rounded-sm dark:bg-green-900/60"></span> +Adj</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 bg-red-200 border border-default rounded-sm dark:bg-red-900/60"></span> -Adj</span>
           </div>
         </div>
         {AdSchedule && AdSchedule.length > 0 ? (
@@ -2331,14 +2726,14 @@ function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; 
               <div className="flex">
                 <div className="w-10"></div>
                 {hours.map((h) => (
-                  <div key={h} className="flex-1 text-center text-[10px] text-gray-500 border-l border-transparent">
+                  <div key={h} className="flex-1 text-center text-[10px] text-muted border-l border-transparent">
                     {h}
                   </div>
                 ))}
               </div>
               {days.map((day, dIdx) => (
                 <div key={day} className="flex items-center h-8 text-xs">
-                  <div className="w-10 font-medium text-gray-600 dark:text-gray-400">{day}</div>
+                  <div className="w-10 font-medium text-muted">{day}</div>
                   {hours.map((h) => {
                     const cell = scheduleGrid[dIdx][h];
                     let bgClass = "bg-transparent";
@@ -2370,7 +2765,7 @@ function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; 
             </div>
           </div>
         ) : (
-          <div className="text-sm text-gray-500">No ad schedule defined.</div>
+          <div className="text-sm text-muted">No ad schedule defined.</div>
         )}
       </div>
 
@@ -2380,7 +2775,7 @@ function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; 
           {NegativeKeywords && NegativeKeywords.length > 0 && (
             <button
               onClick={() => void copyNegativeKeywords()}
-              className="text-xs px-2 py-1 border rounded hover:bg-gray-100 dark:hover:bg-slate-700 flex items-center gap-1"
+              className="text-xs px-2 py-1 border border-default rounded transition hover:bg-slate-200 hover:shadow-sm hover:-translate-y-0.5 dark:hover:bg-slate-700 flex items-center gap-1"
             >
               {copiedNegatives ? <CheckIcon className="w-3 h-3 text-green-600" /> : <ClipboardIcon className="w-3 h-3" />}
               {copiedNegatives ? "Copied!" : "Copy All to Clipboard"}
@@ -2388,20 +2783,20 @@ function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; 
           )}
         </div>
         {NegativeKeywords && NegativeKeywords.length > 0 ? (
-          <div className="max-h-60 overflow-y-auto border rounded bg-gray-50 p-2 dark:bg-slate-800 dark:border-slate-700">
+          <div className="max-h-60 overflow-y-auto border border-default rounded bg-surface-muted p-2">
             <div className="flex flex-wrap gap-2">
               {NegativeKeywords.map((kw, i) => (
                 <span
                   key={i}
-                  className="px-2 py-1 bg-white border rounded text-xs text-gray-700 dark:bg-slate-700 dark:border-slate-600 dark:text-slate-200"
+                  className="px-2 py-1 bg-surface border border-default rounded text-xs text-muted"
                 >
-                  {kw.Keyword} <span className="text-gray-400 dark:text-gray-500">({kw.MatchType})</span>
+                  {kw.Keyword} <span className="text-muted">({kw.MatchType})</span>
                 </span>
               ))}
             </div>
           </div>
         ) : (
-          <div className="text-sm text-gray-500">No negative keywords.</div>
+          <div className="text-sm text-muted">No negative keywords.</div>
         )}
       </div>
     </div>
@@ -2446,7 +2841,7 @@ function AdGroupTabs({
   /* eslint-enable react-hooks/set-state-in-effect */
 
   if (!adGroup) {
-    return <div className="text-sm text-gray-600">Select an ad group to view ads and keywords.</div>;
+    return <div className="text-sm text-muted">Select an ad group to view ads and keywords.</div>;
   }
 
   const copyAd = async (
@@ -2478,17 +2873,37 @@ function AdGroupTabs({
     }
   };
 
+  const getCharCount = (
+    text: string,
+    meta: NonNullable<CampaignPlanAdGroup["ResponsiveSearchAds"]>[number]["HeadlinesMeta"] | undefined,
+    index: number,
+  ) => {
+    const entry = meta?.[index];
+    if (entry && entry.Text === text && Number.isFinite(entry.CharCount)) {
+      return entry.CharCount;
+    }
+    return text.length;
+  };
+
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
         <button
-          className={`px-3 py-1 rounded border ${tab === "ads" ? "bg-blue-600 text-white" : "bg-white"}`}
+          className={`px-3 py-1 rounded border border-default transition ${
+            tab === "ads"
+              ? "bg-blue-600 text-white hover:bg-blue-700 hover:border-blue-600 dark:hover:bg-blue-500"
+              : "bg-surface text-body hover:border-blue-400 hover:bg-blue-200/70 hover:text-blue-900 dark:hover:border-blue-400 dark:hover:bg-blue-800/40"
+          }`}
           onClick={() => setTab("ads")}
         >
           Ads ({ads.length})
         </button>
         <button
-          className={`px-3 py-1 rounded border ${tab === "keywords" ? "bg-blue-600 text-white" : "bg-white"}`}
+          className={`px-3 py-1 rounded border border-default transition ${
+            tab === "keywords"
+              ? "bg-blue-600 text-white hover:bg-blue-700 hover:border-blue-600 dark:hover:bg-blue-500"
+              : "bg-surface text-body hover:border-blue-400 hover:bg-blue-200/70 hover:text-blue-900 dark:hover:border-blue-400 dark:hover:bg-blue-800/40"
+          }`}
           onClick={() => setTab("keywords")}
         >
           Keywords ({keywords.length})
@@ -2498,13 +2913,15 @@ function AdGroupTabs({
       {tab === "ads" && (
         <div className="space-y-3">
           {ads.map((ad, idx) => (
-            <div key={idx} className="border rounded p-4 bg-gray-50 space-y-4">
+            <div key={idx} className="border border-default rounded p-4 bg-surface space-y-4">
               <div className="flex items-center justify-between gap-3">
                 <div className="font-medium text-sm">Responsive Search Ad {idx + 1}</div>
                 <button
                   type="button"
-                  className={`flex items-center gap-1 text-xs px-2 py-1 border rounded transition ${
-                    copiedKey === `ad-${idx}` ? "bg-green-100 text-green-800 border-green-300" : "hover:bg-white"
+                  className={`${copyButtonClass} ${
+                    copiedKey === `ad-${idx}`
+                      ? "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/30 dark:text-green-200 dark:border-green-700"
+                      : ""
                   }`}
                   onClick={() => void copyAd(ad, idx)}
                   title="Copy headlines and descriptions"
@@ -2515,15 +2932,18 @@ function AdGroupTabs({
               </div>
               <div className="space-y-3">
                 <div>
-                  <div className="text-xs text-gray-500 mb-2 uppercase tracking-wide">Headlines</div>
+                  <div className="text-xs text-muted mb-2 uppercase tracking-wide">Headlines</div>
                   <ol className="list-decimal list-inside text-sm space-y-2">
-                  {ad.Headlines.map((headline, hIdx) => (
+                  {ad.Headlines.map((headline, hIdx) => {
+                    const charCount = getCharCount(headline, ad.HeadlinesMeta, hIdx);
+                    return (
                       <li key={hIdx} className="flex items-start gap-2 py-1">
                         <span className="flex-1">{headline}</span>
+                        <span className="text-xs text-muted tabular-nums whitespace-nowrap">{charCount} chars</span>
                         <button
                           type="button"
-                          className={`text-blue-700 hover:text-blue-900 px-1 rounded ${
-                            copiedKey === `headline-${idx}-${hIdx}` ? "text-green-700" : ""
+                          className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-blue-700 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100 transition hover:bg-slate-300 dark:hover:bg-slate-700 ${
+                            copiedKey === `headline-${idx}-${hIdx}` ? "text-green-700 dark:text-green-300" : ""
                           }`}
                           title="Copy headline"
                           onClick={() => {
@@ -2538,19 +2958,23 @@ function AdGroupTabs({
                           )}
                         </button>
                       </li>
-                  ))}
+                    );
+                  })}
                 </ol>
               </div>
                 <div>
-                  <div className="text-xs text-gray-500 mb-2 uppercase tracking-wide">Descriptions</div>
+                  <div className="text-xs text-muted mb-2 uppercase tracking-wide">Descriptions</div>
                   <ol className="list-decimal list-inside text-sm space-y-2">
-                  {ad.Descriptions.map((desc, dIdx) => (
+                  {ad.Descriptions.map((desc, dIdx) => {
+                    const charCount = getCharCount(desc, ad.DescriptionsMeta, dIdx);
+                    return (
                       <li key={dIdx} className="flex items-start gap-2 py-1">
                         <span className="flex-1">{desc}</span>
+                        <span className="text-xs text-muted tabular-nums whitespace-nowrap">{charCount} chars</span>
                         <button
                           type="button"
-                          className={`text-blue-700 hover:text-blue-900 px-1 rounded ${
-                            copiedKey === `desc-${idx}-${dIdx}` ? "text-green-700" : ""
+                          className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-blue-700 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100 transition hover:bg-slate-300 dark:hover:bg-slate-700 ${
+                            copiedKey === `desc-${idx}-${dIdx}` ? "text-green-700 dark:text-green-300" : ""
                           }`}
                           title="Copy description"
                           onClick={() => {
@@ -2565,13 +2989,14 @@ function AdGroupTabs({
                           )}
                         </button>
                       </li>
-                  ))}
+                    );
+                  })}
                 </ol>
               </div>
               </div>
             </div>
           ))}
-          {ads.length === 0 && <div className="text-sm text-gray-600">No ads in this ad group.</div>}
+          {ads.length === 0 && <div className="text-sm text-muted">No ads in this ad group.</div>}
         </div>
       )}
 
@@ -2589,7 +3014,7 @@ function AdGroupTabs({
             </thead>
             <tbody>
               {keywords.map((kw, idx) => (
-                <tr key={idx} className="odd:bg-gray-50">
+                <tr key={idx} className="odd:bg-gray-50 dark:odd:bg-slate-900/40">
                   <td className="px-2 py-1">{kw.Keyword}</td>
                   <td className="px-2 py-1">{kw.MatchType}</td>
                   <td className="px-2 py-1">{formatNumber(kw.AvgMonthlySearches ?? null)}</td>
@@ -2599,14 +3024,14 @@ function AdGroupTabs({
               ))}
               {keywords.length === 0 && (
                 <tr>
-                  <td className="px-2 py-1 text-sm text-gray-600" colSpan={5}>
+                  <td className="px-2 py-1 text-sm text-muted" colSpan={5}>
                     No keywords available.
                 </td>
               </tr>
             )}
           </tbody>
           <tfoot>
-            <tr className="bg-blue-50 font-medium">
+            <tr className="bg-blue-50 font-medium dark:bg-blue-900/30 dark:text-blue-100">
               <td className="px-2 py-2 text-right" colSpan={2}>
                 Averages
               </td>
@@ -2617,12 +3042,14 @@ function AdGroupTabs({
           </tfoot>
           </table>
           <div className="mt-3 space-y-2">
-            <div className="flex items-center justify-between text-xs text-gray-600">
+            <div className="flex items-center justify-between text-xs text-muted">
               <span>All keywords (comma separated, formatted by match type)</span>
               <button
                 type="button"
-                className={`flex items-center gap-1 px-2 py-1 border rounded transition ${
-                  copiedKey === "keywords" ? "bg-green-100 text-green-800 border-green-300" : ""
+                className={`flex items-center gap-1 px-2 py-1 border border-default rounded transition hover:bg-slate-200 hover:shadow-sm hover:-translate-y-0.5 dark:hover:bg-slate-700 ${
+                  copiedKey === "keywords"
+                    ? "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/30 dark:text-green-200 dark:border-green-700"
+                    : ""
                 }`}
                 onClick={() => {
                   void copyText(keywordText);
@@ -2633,8 +3060,8 @@ function AdGroupTabs({
                 <span>{copiedKey === "keywords" ? "Copied" : "Copy"}</span>
               </button>
             </div>
-            <textarea
-              className="w-full border rounded p-2 text-sm"
+            <Textarea
+              className="text-sm"
               rows={3}
               value={keywordText}
               onChange={(e) => setKeywordText(e.target.value)}
@@ -2648,7 +3075,7 @@ function AdGroupTabs({
 
 export default function CampaignVisualizerPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading visualizer...</div>}>
+    <Suspense fallback={<div className="p-6 text-sm text-muted">Loading visualizer...</div>}>
       <CampaignVisualizerPageContent />
     </Suspense>
   );

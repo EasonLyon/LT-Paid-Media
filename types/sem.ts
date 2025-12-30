@@ -262,6 +262,13 @@ export interface CampaignPlanTargeting {
 export interface CampaignPlanResponsiveSearchAd {
   Headlines: string[];
   Descriptions: string[];
+  HeadlinesMeta?: CampaignPlanAdTextWithCount[];
+  DescriptionsMeta?: CampaignPlanAdTextWithCount[];
+}
+
+export interface CampaignPlanAdTextWithCount {
+  Text: string;
+  CharCount: number;
 }
 
 export interface CampaignPlanAdGroup {
@@ -307,6 +314,7 @@ export interface CampaignPlan {
   Goal: string;
   CampaignType: string;
   BudgetDailyMYR: number | null;
+  MonthlyBudgetMYR?: number | null;
   TargetCPAMYR: number | null;
   BiddingLifecycle?: BiddingLifecycle;
   AdSchedule?: AdScheduleEntry[];

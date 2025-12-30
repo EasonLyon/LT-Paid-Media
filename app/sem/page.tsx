@@ -41,7 +41,8 @@ type StepKey =
   | "campaign"
   | "campaignPlan"
   | "visualizer"
-  | "landingPageInput";
+  | "landingPageInput"
+  | "landingPagePlan";
 type CollapsibleKey = "project" | "step1" | "runSteps" | "step7" | "step8" | "step9" | "step10";
 
 interface StepStatus {
@@ -76,6 +77,25 @@ const GOAL_OPTIONS = ["Lead", "Traffic", "Sales", "Awareness"];
 const LOCATION_OPTIONS = ["Malaysia", "Singapore", "Indonesia", "Philippines", "Thailand"];
 const LANGUAGE_OPTIONS = ["English", "Malay", "Chinese", "Tamil"];
 const OTHER_VALUE = "__other";
+
+const primaryButton =
+  "inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50";
+const primaryButtonSm =
+  "inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50";
+const secondaryButton =
+  "inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700";
+const secondaryButtonSm =
+  "inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-800 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700";
+const destructiveButton =
+  "inline-flex items-center justify-center gap-2 rounded-md border border-red-200 px-4 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900/40 dark:text-red-200 dark:hover:bg-red-900/20";
+const badgeBase = "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium";
+const badgeNeutral = `${badgeBase} bg-gray-100 text-gray-700 dark:bg-slate-800 dark:text-slate-200`;
+const badgeInfo = `${badgeBase} bg-blue-50 text-blue-700 border border-blue-200 dark:border-blue-900/60 dark:bg-blue-900/30 dark:text-blue-200`;
+const badgeSuccess = `${badgeBase} bg-green-50 text-green-700 border border-green-200 dark:bg-green-900/30 dark:border-green-900/60 dark:text-green-200`;
+const badgeWarning = `${badgeBase} bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-900/30 dark:border-amber-900/60 dark:text-amber-200`;
+const badgeDanger = `${badgeBase} bg-red-50 text-red-700 border border-red-200 dark:bg-red-900/30 dark:border-red-900/60 dark:text-red-200`;
+const iconButton =
+  "inline-flex items-center justify-center rounded-md border border-gray-300 bg-white p-1.5 text-gray-700 transition-colors hover:bg-gray-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700";
 
 const DEFAULT_START_FORM: StartFormState = {
   website: "",
@@ -143,17 +163,18 @@ interface CollapsibleSectionProps {
   title: string;
   isOpen: boolean;
   onToggle: () => void;
+  id?: string;
   children: ReactNode;
 }
 
-function CollapsibleSection({ title, isOpen, onToggle, children }: CollapsibleSectionProps) {
+function CollapsibleSection({ title, isOpen, onToggle, id, children }: CollapsibleSectionProps) {
   return (
-    <section className="border rounded-lg border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+    <section id={id} className="border rounded-lg border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50 dark:border-slate-700 dark:bg-slate-800">
         <h2 className="text-xl font-medium text-slate-900 dark:text-white">{title}</h2>
         <button
           type="button"
-          className="inline-flex items-center gap-2 border rounded px-3 py-1 text-sm bg-white hover:bg-blue-50 transition-colors dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+          className={secondaryButtonSm}
           aria-expanded={isOpen}
           onClick={onToggle}
         >
@@ -200,6 +221,7 @@ function DownloadIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
 
 async function callApi<T extends StepResponse = StepResponse>(endpoint: string, payload: Record<string, unknown>) {
   const res = await fetch(`/api/sem/${endpoint}`, {
@@ -252,11 +274,17 @@ function getShortFileLabel(filename: string): string {
   return filename;
 }
 
+function formatBooleanFlags(flags: boolean[], trueLabel: string, falseLabel: string): string {
+  if (flags.length === 0) return "None";
+  return flags.map((value) => (value ? trueLabel : falseLabel)).join(", ");
+}
+
 export default function SemPage() {
   const [projectId, setProjectId] = useState<string>("");
   const [isBusy, setIsBusy] = useState(false);
   const [existingProjects, setExistingProjects] = useState<ExistingProjectSummary[]>([]);
   const [isFetchingProjects, setIsFetchingProjects] = useState(false);
+  const [isGeneratingProjectId, setIsGeneratingProjectId] = useState(false);
   const [projectListError, setProjectListError] = useState<string | null>(null);
   const [availableFiles, setAvailableFiles] = useState<string[]>([]);
   const [fileDetails, setFileDetails] = useState<Record<string, { modifiedMs: number; size: number }>>({});
@@ -267,6 +295,7 @@ export default function SemPage() {
   const [hideStepFiles, setHideStepFiles] = useState<boolean>(true);
   const [selectedFilesForDownload, setSelectedFilesForDownload] = useState<Set<string>>(() => new Set());
   const [isDownloadingFiles, setIsDownloadingFiles] = useState(false);
+  const [isDeletingFiles, setIsDeletingFiles] = useState(false);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [selectedFileContent, setSelectedFileContent] = useState<string>("");
   const [fileContentMeta, setFileContentMeta] = useState<{ isJson: boolean } | null>(null);
@@ -288,6 +317,7 @@ export default function SemPage() {
     campaignPlan: { status: "idle" },
     visualizer: { status: "idle" },
     landingPageInput: { status: "idle" },
+    landingPagePlan: { status: "idle" },
   });
 
   const [startForm, setStartForm] = useState<StartFormState>({ ...DEFAULT_START_FORM });
@@ -322,8 +352,11 @@ export default function SemPage() {
     step10: true,
   });
   const [resetNotification, setResetNotification] = useState<string | null>(null);
+  const [campaignPlanContext, setCampaignPlanContext] = useState<string>("");
+  const [campaignPlanAppendContext, setCampaignPlanAppendContext] = useState<boolean>(true);
   const [landingPageContext, setLandingPageContext] = useState<string>("");
   const [landingPageGeneratedAt, setLandingPageGeneratedAt] = useState<string | null>(null);
+  const [step9CompletedAt, setStep9CompletedAt] = useState<string | null>(null);
   
   // Step 10.2 States
   const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
@@ -332,6 +365,26 @@ export default function SemPage() {
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [isEditingPlan, setIsEditingPlan] = useState(false);
   const [editedPlanContent, setEditedPlanContent] = useState("");
+
+  const stepAnchors: Record<StepKey, string> = {
+    start: "step-1",
+    search: "step-run",
+    serp: "step-run",
+    site: "step-run",
+    combine: "step-run",
+    score: "step-run",
+    campaign: "step-7",
+    campaignPlan: "step-8",
+    visualizer: "step-9",
+    landingPageInput: "step-10",
+    landingPagePlan: "step-10-2",
+  };
+
+  const scrollToStep = (key: StepKey) => {
+    const anchor = stepAnchors[key];
+    const node = anchor ? document.getElementById(anchor) : null;
+    if (node) node.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const [confirmDialog, setConfirmDialog] = useState<{
     title: string;
@@ -356,6 +409,40 @@ export default function SemPage() {
     }),
     [availableFiles],
   );
+
+  const readStep9Completion = (pid?: string | null) => {
+    if (!pid) return null;
+    try {
+      return window.localStorage.getItem(`sem_step9_completed_at_${pid}`);
+    } catch {
+      return null;
+    }
+  };
+
+  const recordStep9Completion = (pid: string, timestamp = new Date().toISOString()) => {
+    try {
+      window.localStorage.setItem(`sem_step9_completed_at_${pid}`, timestamp);
+    } catch {
+      // ignore storage write failures
+    }
+    setStep9CompletedAt(timestamp);
+  };
+
+  const formatMalaysiaTime = (iso: string) => {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return iso;
+    const formatter = new Intl.DateTimeFormat("en-MY", {
+      timeZone: "Asia/Kuala_Lumpur",
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+    });
+    return `${formatter.format(date)} MYT`;
+  };
 
   const askConfirm = (title: string, message: string, confirmLabel = "Rerun", cancelLabel = "Use existing") =>
     new Promise<boolean>((resolve) => {
@@ -626,6 +713,29 @@ export default function SemPage() {
     persistProjectId(value);
   };
 
+  const generateNewProjectId = async () => {
+    if (isGeneratingProjectId) return;
+    setIsGeneratingProjectId(true);
+    try {
+      const res = await fetch("/api/sem/next-project-id", { cache: "no-store" });
+      if (!res.ok) {
+        throw new Error(res.statusText);
+      }
+      const json = (await res.json()) as { suggested?: string };
+      const nextId = json.suggested ?? buildLocalProjectIdFallback();
+      handleProjectIdChange(nextId);
+      push(`Generated new projectId: ${nextId}${json.suggested ? "" : " (fallback)"}`);
+      void refreshExistingProjects();
+    } catch (err: unknown) {
+      const fallback = buildLocalProjectIdFallback();
+      handleProjectIdChange(fallback);
+      const message = err instanceof Error ? err.message : "Unable to fetch suggested projectId";
+      push(`Generated new projectId: ${fallback} (fallback). ${message}`);
+    } finally {
+      setIsGeneratingProjectId(false);
+    }
+  };
+
   const openFile = async (filename: string) => {
     if (!projectId || !filename) return;
     setSelectedFile(filename);
@@ -680,6 +790,14 @@ export default function SemPage() {
       }
       return next;
     });
+  };
+
+  const selectAllFilteredFiles = () => {
+    setSelectedFilesForDownload(new Set(filteredFiles));
+  };
+
+  const clearFileSelection = () => {
+    setSelectedFilesForDownload(new Set());
   };
 
   const matchesFileTypeFilter = (filename: string) => {
@@ -741,6 +859,44 @@ export default function SemPage() {
     }
   };
 
+  const deleteSelectedFiles = async () => {
+    if (!projectId) return;
+    const files = filteredFiles.filter((file) => selectedFilesForDownload.has(file));
+    if (files.length === 0) return;
+    const confirmDelete = window.confirm(
+      `Delete ${files.length} file${files.length === 1 ? "" : "s"}? This cannot be undone.`,
+    );
+    if (!confirmDelete) return;
+    setFileListError(null);
+    setIsDeletingFiles(true);
+    const failures: string[] = [];
+    for (const file of files) {
+      try {
+        const res = await fetch(
+          `/api/sem/project-files?projectId=${encodeURIComponent(projectId)}&file=${encodeURIComponent(file)}`,
+          { method: "DELETE" },
+        );
+        const json = (await res.json()) as { error?: string };
+        if (!res.ok || json.error) {
+          throw new Error(json.error ?? res.statusText);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unable to delete file";
+        failures.push(`${file}: ${message}`);
+      }
+    }
+    if (selectedFile && files.includes(selectedFile)) {
+      closeFileViewer();
+    }
+    await refreshProjectFiles(projectId);
+    setIsDeletingFiles(false);
+    if (failures.length > 0) {
+      setFileListError(`Some files could not be deleted: ${failures.join("; ")}`);
+    } else {
+      push(`Deleted ${files.length} file${files.length === 1 ? "" : "s"}`);
+    }
+  };
+
   const formatJsonContent = () => {
     if (!fileContentMeta?.isJson) return;
     try {
@@ -792,6 +948,18 @@ export default function SemPage() {
   }, [projectId, refreshProjectFiles]);
 
   useEffect(() => {
+    setStep9CompletedAt(readStep9Completion(projectId));
+    const handler = (event: StorageEvent) => {
+      if (!projectId) return;
+      if (event.key === `sem_step9_completed_at_${projectId}`) {
+        setStep9CompletedAt(event.newValue);
+      }
+    };
+    window.addEventListener("storage", handler);
+    return () => window.removeEventListener("storage", handler);
+  }, [projectId]);
+
+  useEffect(() => {
     setStepStatuses((prev) => {
       let changed = false;
       const next: typeof prev = { ...prev };
@@ -814,9 +982,13 @@ export default function SemPage() {
       markComplete("campaignPlan", "Plan ready for QA");
       markComplete("landingPageInput", "Input JSON ready");
 
-      const visualizerStatus: StepStatus = stepCompletion.campaignPlan
-        ? { status: "success", message: "10/11 plan ready" }
-        : { status: "idle", message: "Run Step 8 to generate plan" };
+      const visualizerStatus: StepStatus = step9CompletedAt
+        ? { status: "success", message: `Completed ${formatMalaysiaTime(step9CompletedAt)}` }
+        : next.visualizer.status === "running"
+          ? next.visualizer
+          : stepCompletion.campaignPlan
+            ? { status: "idle", message: "Ready to run Step 9" }
+            : { status: "idle", message: "Run Step 8 to generate plan" };
       if (
         next.visualizer.status !== visualizerStatus.status ||
         next.visualizer.message !== visualizerStatus.message
@@ -827,7 +999,7 @@ export default function SemPage() {
 
       return changed ? next : prev;
     });
-  }, [stepCompletion]);
+  }, [stepCompletion, step9CompletedAt]);
 
   const runStep = async (
     endpoint: string,
@@ -917,11 +1089,10 @@ export default function SemPage() {
     const newWindow = window.open(href, "_blank", "noreferrer");
     if (!newWindow) {
       push("Unable to open visualization (popup blocked?). Please open manually.");
-      updateStepStatus("visualizer", { status: "success", message: "Open visualizer manually" });
+      updateStepStatus("visualizer", { status: "idle", message: "Open visualizer manually" });
       return true;
     }
     push("Opened visualization workspace in a new tab");
-    updateStepStatus("visualizer", { status: "success", message: "Visualizer opened" });
     return true;
   };
 
@@ -1649,7 +1820,11 @@ export default function SemPage() {
       const res = await fetch("/api/sem/campaign-plan", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ projectId }),
+        body: JSON.stringify({
+          projectId,
+          additionalContext: campaignPlanContext,
+          appendContext: campaignPlanAppendContext,
+        }),
       });
       const json = (await res.json()) as { campaigns?: CampaignPlan[]; fileName?: string; error?: string };
       if (!res.ok) {
@@ -1717,20 +1892,7 @@ export default function SemPage() {
     try {
       setIsGeneratingPlan(true);
       setPlanGenerationTime(0);
-      updateStepStatus("landingPageInput", { status: "running", message: "Generating plan with OpenAI..." }); // Re-using existing status key or should I add a new one? 
-      // User asked for "Step 10 – Landing Page Plan" which corresponds to "landingPageInput" key in my previous mapping?
-      // Actually step 10 has two parts now. 
-      // The status key "landingPageInput" was used for 10.1.
-      // I should probably use a new key or just reuse it to show progress.
-      // Let's check stepStatuses definition.
-      // It has `landingPageInput`. I'll use that for now, or maybe I should have added `landingPagePlan` key.
-      // The UI I added uses `stepCompletion.landingPageInput` to show the section.
-      // The button I added is inside the section.
-      
-      // Let's stick to using `landingPageInput` status for general status or just local state.
-      // The button shows `isGeneratingPlan` state.
-      // I'll update the status message at least.
-      
+      updateStepStatus("landingPagePlan", { status: "running", message: "Generating plan with OpenAI..." });
       const res = await fetch("/api/sem/landing-page-plan-generation", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1748,51 +1910,103 @@ export default function SemPage() {
       });
       
       push(`Step 10.2 success: Saved to ${json.fileName}`);
-      // updateStepStatus("landingPageInput", { status: "success", message: "Plan Generated" });
+      updateStepStatus("landingPagePlan", { status: "success", message: "Plan ready" });
       refreshProjectFiles(projectId);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       push(`Error Step 10.2: ${msg}`);
-      // updateStepStatus("landingPageInput", { status: "error", message: msg });
+      updateStepStatus("landingPagePlan", { status: "error", message: msg });
     } finally {
       setIsGeneratingPlan(false);
     }
   };
 
+  const step9LogPrefix = "[Step 9][Visualizer]";
+  const formatStep9LogEntry = (entry: string) => {
+    const trimmed = entry.trim();
+    if (trimmed.startsWith("Resolved base plan file ")) {
+      const fileName = trimmed.replace("Resolved base plan file ", "").replace(/\.$/, "");
+      return `Base plan: ${fileName}`;
+    }
+    if (trimmed.startsWith("Backup ready: ")) {
+      const fileName = trimmed.replace("Backup ready: ", "").replace(/\.$/, "");
+      return `Backup: ${fileName}`;
+    }
+    if (trimmed === "Backup not created or not needed.") {
+      return "Backup: none";
+    }
+    if (trimmed.startsWith("Loaded ") && trimmed.endsWith(" campaign(s).")) {
+      const count = trimmed.replace("Loaded ", "").replace(" campaign(s).", "");
+      return `Campaigns loaded: ${count}`;
+    }
+    if (trimmed === "Enriching keywords and ad text.") {
+      return "Enrichment: start";
+    }
+    if (trimmed.startsWith("Writing enriched plan to ")) {
+      const fileName = trimmed.replace("Writing enriched plan to ", "").replace(/\.$/, "");
+      return `Saved: ${fileName}`;
+    }
+    if (trimmed === "Step 9 complete.") {
+      return "Complete";
+    }
+    return trimmed;
+  };
+
   const handleRedoVisualization = async () => {
     if (!projectId) return;
-    const confirmReset = await askConfirm(
-      "Reset Visualization?",
-      "This will delete any edits in '11-campaign-plan-enriched.json' and the backup. The visualizer will reload fresh data from Step 8 (10-*.json).",
-      "Reset & Delete",
-      "Cancel",
-    );
-    if (!confirmReset) return;
+    const hasEnrichedPlan = availableFiles.some((file) => file.startsWith("11-") && file.endsWith(".json"));
+    if (hasEnrichedPlan) {
+      const confirmReset = await askConfirm(
+        "Re-run Step 9?",
+        "An existing 11-*.json was found. Re-running Step 9 will overwrite it using the latest 10-*.json.",
+        "Delete & Re-run",
+        "Cancel",
+      );
+      if (!confirmReset) return;
+    }
 
     setIsBusy(true);
-    push("Resetting visualization files...");
+    updateStepStatus("visualizer", { status: "running", message: "Step 9 running…" });
+    push(`${step9LogPrefix} Starting enrichment`);
     try {
-      // Delete enriched file
-      await fetch(
-        `/api/sem/project-files?projectId=${encodeURIComponent(projectId)}&file=11-campaign-plan-enriched.json`,
-        { method: "DELETE" },
+      const res = await fetch("/api/sem/campaign-visualizer", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId }),
+      });
+      const json = (await res.json()) as {
+        error?: string;
+        fileName?: string;
+        progressLog?: string[];
+        adTextRemovals?: unknown[];
+      };
+      if (!res.ok) {
+        (json.progressLog ?? []).forEach((entry) =>
+          push(`${step9LogPrefix} ${formatStep9LogEntry(entry)}`),
+        );
+        throw new Error(json.error || "Step 9 failed");
+      }
+      (json.progressLog ?? []).forEach((entry) =>
+        push(`${step9LogPrefix} ${formatStep9LogEntry(entry)}`),
       );
-      // Delete backup file (assuming standard naming or one generated by visualizer)
-      // We try deleting the most common backup name.
-      await fetch(
-        `/api/sem/project-files?projectId=${encodeURIComponent(projectId)}&file=10-campaign-plan.backup.json`,
-        { method: "DELETE" },
-      );
-
-      const timestamp = new Date().toLocaleTimeString();
-      push(`Visualization reset at ${timestamp}. Opening visualizer now will re-generate from Step 8 output.`);
-      updateStepStatus("visualizer", { status: "idle", message: "Reset complete" });
-      setResetNotification(`Reset completed at ${timestamp}`);
-      setTimeout(() => setResetNotification(null), 5000);
+      if (json.adTextRemovals?.length) {
+        push(`${step9LogPrefix} Ad text removals: ${json.adTextRemovals.length}`);
+      }
       refreshProjectFiles(projectId);
+
+      const completedAt = new Date().toISOString();
+      recordStep9Completion(projectId, completedAt);
+      const formatted = formatMalaysiaTime(completedAt);
+      updateStepStatus("visualizer", { status: "success", message: `Completed ${formatted}` });
+      push(`${step9LogPrefix} Completed at ${formatted}`);
+      setResetNotification(`Step 9 completed at ${formatted}`);
+      setTimeout(() => setResetNotification(null), 5000);
+      window.alert(`Step 9 completed at ${formatted}`);
+      openVisualizerTab();
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Reset failed";
-      push(`Reset failed: ${message}`);
+      const message = err instanceof Error ? err.message : "Step 9 failed";
+      push(`${step9LogPrefix} Failed: ${message}`);
+      updateStepStatus("visualizer", { status: "error", message });
     } finally {
       setIsBusy(false);
     }
@@ -1802,6 +2016,7 @@ export default function SemPage() {
     .filter((file) => matchesFileTypeFilter(file))
     .filter((file) => file.toLowerCase().includes(fileFilter.toLowerCase()));
   const selectedDownloadCount = filteredFiles.filter((file) => selectedFilesForDownload.has(file)).length;
+  const selectedCampaignFilters = getSelectedCampaignFilters();
 
   return (
     <main className="min-h-screen p-6 flex justify-center bg-gray-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
@@ -1811,28 +2026,22 @@ export default function SemPage() {
           <div className="border rounded-lg p-3 bg-gray-50 flex flex-wrap items-center gap-3 text-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="flex items-center gap-2">
               <span className="font-medium text-gray-700 dark:text-slate-200">Project</span>
-              <span
-                className={`px-2 py-1 rounded ${projectId ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-200" : "bg-gray-200 text-gray-700 dark:bg-slate-800 dark:text-slate-200"}`}
-              >
-                {projectId || "Not set"}
-              </span>
+              <span className={projectId ? badgeSuccess : badgeNeutral}>{projectId || "Not set"}</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="font-medium text-gray-700 dark:text-slate-200">Filters</span>
-              <span className="px-2 py-1 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-100">
-                Tiers: {getSelectedCampaignFilters().tiers.join(", ")}
+              <span className={badgeInfo}>Tiers: {selectedCampaignFilters.tiers.join(", ")}</span>
+              <span className={badgeNeutral}>
+                Paid: {formatBooleanFlags(selectedCampaignFilters.paidFlags, "Paid", "Not Paid")}
               </span>
-              <span className="px-2 py-1 rounded bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-100">
-                Paid: {getSelectedCampaignFilters().paidFlags.join(", ")}
-              </span>
-              <span className="px-2 py-1 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-100">
-                SEO: {getSelectedCampaignFilters().seoFlags.join(", ")}
+              <span className={badgeWarning}>
+                SEO: {formatBooleanFlags(selectedCampaignFilters.seoFlags, "SEO", "Non-SEO")}
               </span>
             </div>
             <div className="flex items-center gap-2">
               <span className="font-medium text-gray-700 dark:text-slate-200">Status</span>
-              <span className="px-2 py-1 rounded bg-gray-200 text-gray-700 dark:bg-slate-800 dark:text-slate-200">
-                Last: {Object.values(stepStatuses).some((s) => s.status === "running") ? "Running" : "Idle"}
+              <span className={badgeNeutral}>
+                {Object.values(stepStatuses).some((s) => s.status === "running") ? "Running" : "Idle"}
               </span>
             </div>
           </div>
@@ -1844,23 +2053,34 @@ export default function SemPage() {
               title="Project ID & Files"
               isOpen={openSections.project}
               onToggle={() => toggleSection("project")}
+              id="project"
             >
               <label className="grid gap-1">
                 <span>projectId</span>
-                <input
-                  className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                  value={projectId}
-                  onChange={(e) => handleProjectIdChange(e.target.value)}
-                  placeholder="YYYYMMDD-HH-001"
-                  autoComplete="off"
-                />
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    className="flex-1 border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                    value={projectId}
+                    onChange={(e) => handleProjectIdChange(e.target.value)}
+                    placeholder="YYYYMMDD-HH-001"
+                    autoComplete="off"
+                  />
+                  <button
+                    type="button"
+                    className={secondaryButtonSm}
+                    onClick={() => void generateNewProjectId()}
+                    disabled={isGeneratingProjectId}
+                  >
+                    {isGeneratingProjectId ? "Generating..." : "New project"}
+                  </button>
+                </div>
               </label>
               <div className="grid gap-2">
                 <div className="flex items-center justify-between text-sm text-gray-700 dark:text-slate-200">
                   <span>Or select an existing project</span>
                   <button
                     type="button"
-                    className="border rounded px-2 py-1 bg-white hover:bg-blue-50 text-xs disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                    className={secondaryButtonSm}
                     onClick={() => void refreshExistingProjects()}
                     disabled={isFetchingProjects}
                   >
@@ -1906,72 +2126,135 @@ export default function SemPage() {
               title="Step 1 – Start Project"
               isOpen={openSections.step1}
               onToggle={() => toggleSection("step1")}
+              id="step-1"
             >
               <p className="text-sm text-gray-700 leading-relaxed dark:text-slate-200">
                 We scrape your website&apos;s public content here to understand your business and brainstorm ad-ready
                 keyword ideas you can run campaigns with.
               </p>
-              <form className="grid gap-3" onSubmit={handleStart}>
-                <label className="grid gap-1">
-                  <span>Website (required)</span>
-                  <input
-                    required
-                    className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                    value={startForm.website}
-                    onChange={(e) => setStartForm((prev) => ({ ...prev, website: e.target.value }))}
-                    placeholder="https://www.example.com"
-                  />
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="grid gap-1">
-                    <span>Goal</span>
-                    <select
+              <form className="grid gap-5" onSubmit={handleStart}>
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-5 space-y-4 dark:border-slate-700 dark:bg-slate-900/40">
+                  <div>
+                    <div className="text-sm font-semibold text-gray-800 dark:text-slate-100">Business basics</div>
+                    <div className="text-xs text-gray-500 dark:text-slate-400">
+                      Tell us what you offer and what success looks like.
+                    </div>
+                  </div>
+                  <label className="grid gap-2">
+                    <span className="text-sm font-medium text-gray-700 dark:text-slate-200">Website (required)</span>
+                    <input
+                      required
                       className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                      value={startForm.goal}
-                      onChange={(e) => setStartForm((prev) => ({ ...prev, goal: e.target.value }))}
-                    >
-                      {GOAL_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
+                      value={startForm.website}
+                      onChange={(e) => setStartForm((prev) => ({ ...prev, website: e.target.value }))}
+                      placeholder="https://www.example.com"
+                    />
                   </label>
-                  <label className="grid gap-1">
-                    <span>Location</span>
-                    <select
-                      className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                      value={useCustomLocation ? OTHER_VALUE : startForm.location}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        if (value === OTHER_VALUE) {
-                          setUseCustomLocation(true);
-                        } else {
-                          setUseCustomLocation(false);
-                          setStartForm((prev) => ({ ...prev, location: value }));
-                        }
-                      }}
-                    >
-                      {LOCATION_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                      <option value={OTHER_VALUE}>Other</option>
-                    </select>
-                    {useCustomLocation && (
-                      <input
-                        className="border rounded px-3 py-2 mt-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                        value={startForm.location}
-                        onChange={(e) => setStartForm((prev) => ({ ...prev, location: e.target.value }))}
-                        placeholder="Enter a location"
-                      />
-                    )}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+                    <label className="grid gap-2">
+                      <span className="text-sm font-medium text-gray-700 dark:text-slate-200">Goal</span>
+                      <select
+                        className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                        value={startForm.goal}
+                        onChange={(e) => setStartForm((prev) => ({ ...prev, goal: e.target.value }))}
+                      >
+                        {GOAL_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <label className="grid gap-2">
+                    <span className="text-sm font-medium text-gray-700 dark:text-slate-200">Context (optional)</span>
+                    <span className="text-xs text-gray-500 dark:text-slate-400">
+                      Extra background, positioning, or product details to guide the plan.
+                    </span>
+                    <textarea
+                      className="w-full border rounded-md px-3 py-2 text-sm bg-white shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-blue-400 dark:focus:ring-blue-900/50 min-h-[140px]"
+                      value={startForm.context}
+                      onChange={(e) => setStartForm((prev) => ({ ...prev, context: e.target.value }))}
+                      placeholder="Target audience, focus products, positioning, differentiators, etc."
+                    />
                   </label>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="grid gap-1">
-                    <span>State list (comma separated)</span>
+
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-5 space-y-4 dark:border-slate-700 dark:bg-slate-900/40">
+                  <div>
+                    <div className="text-sm font-semibold text-gray-800 dark:text-slate-100">Targeting</div>
+                    <div className="text-xs text-gray-500 dark:text-slate-400">
+                      Where and who you want to reach.
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label className="grid gap-2">
+                      <span className="text-sm font-medium text-gray-700 dark:text-slate-200">Location</span>
+                      <select
+                        className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                        value={useCustomLocation ? OTHER_VALUE : startForm.location}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          if (value === OTHER_VALUE) {
+                            setUseCustomLocation(true);
+                          } else {
+                            setUseCustomLocation(false);
+                            setStartForm((prev) => ({ ...prev, location: value }));
+                          }
+                        }}
+                      >
+                        {LOCATION_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                        <option value={OTHER_VALUE}>Other</option>
+                      </select>
+                      {useCustomLocation && (
+                        <input
+                          className="border rounded px-3 py-2 mt-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                          value={startForm.location}
+                          onChange={(e) => setStartForm((prev) => ({ ...prev, location: e.target.value }))}
+                          placeholder="Enter a location"
+                        />
+                      )}
+                    </label>
+                    <label className="grid gap-2">
+                      <span className="text-sm font-medium text-gray-700 dark:text-slate-200">Language</span>
+                      <select
+                        className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                        value={useCustomLanguage ? OTHER_VALUE : startForm.language}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          if (value === OTHER_VALUE) {
+                            setUseCustomLanguage(true);
+                          } else {
+                            setUseCustomLanguage(false);
+                            setStartForm((prev) => ({ ...prev, language: value }));
+                          }
+                        }}
+                      >
+                        {LANGUAGE_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                        <option value={OTHER_VALUE}>Other</option>
+                      </select>
+                      {useCustomLanguage && (
+                        <input
+                          className="border rounded px-3 py-2 mt-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                          value={startForm.language}
+                          onChange={(e) => setStartForm((prev) => ({ ...prev, language: e.target.value }))}
+                          placeholder="Enter a language"
+                        />
+                      )}
+                    </label>
+                  </div>
+                  <label className="grid gap-2">
+                    <span className="text-sm font-medium text-gray-700 dark:text-slate-200">
+                      State list (comma separated)
+                    </span>
                     <input
                       className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                       value={startForm.state_list}
@@ -1979,51 +2262,12 @@ export default function SemPage() {
                       placeholder="Selangor, Kuala Lumpur"
                     />
                   </label>
-                  <label className="grid gap-1">
-                    <span>Language</span>
-                    <select
-                      className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                      value={useCustomLanguage ? OTHER_VALUE : startForm.language}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        if (value === OTHER_VALUE) {
-                          setUseCustomLanguage(true);
-                        } else {
-                          setUseCustomLanguage(false);
-                          setStartForm((prev) => ({ ...prev, language: value }));
-                        }
-                      }}
-                    >
-                      {LANGUAGE_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                      <option value={OTHER_VALUE}>Other</option>
-                    </select>
-                    {useCustomLanguage && (
-                      <input
-                        className="border rounded px-3 py-2 mt-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                        value={startForm.language}
-                        onChange={(e) => setStartForm((prev) => ({ ...prev, language: e.target.value }))}
-                        placeholder="Enter a language"
-                      />
-                    )}
-                  </label>
                 </div>
-                <label className="grid gap-1">
-                  <span>Context (optional extra info for business)</span>
-                  <textarea
-                    className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 min-h-[100px]"
-                    value={startForm.context}
-                    onChange={(e) => setStartForm((prev) => ({ ...prev, context: e.target.value }))}
-                    placeholder="Enter more context about the business, target audience, specific products to focus on, etc."
-                  />
-                </label>
-                <div className="space-y-2">
+
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-5 space-y-3 dark:border-slate-700 dark:bg-slate-900/40">
                   <div className="flex items-center justify-between">
-                    <span>Monthly ad spend (MYR)</span>
-                    <span className="text-xs text-gray-600">Slide RM1k–50k or type to go above</span>
+                    <span className="text-sm font-semibold text-gray-800 dark:text-slate-100">Monthly ad spend (MYR)</span>
+                    <span className="text-xs text-gray-500 dark:text-slate-400">Slide RM1k–50k or type to go above</span>
                   </div>
                   <input
                     type="range"
@@ -2034,7 +2278,7 @@ export default function SemPage() {
                     onChange={(e) => handleAdSpendSliderChange(Number(e.target.value))}
                     className="w-full accent-blue-600"
                   />
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm text-gray-600">RM</span>
                     <input
                       type="number"
@@ -2054,11 +2298,8 @@ export default function SemPage() {
                     <div className="text-sm text-red-600">Min RM{MIN_AD_SPEND_MYR.toLocaleString("en-MY")}.</div>
                   )}
                 </div>
-                <button
-                  type="submit"
-                  className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
-                  disabled={isBusy}
-                >
+
+                <button type="submit" className={primaryButton} disabled={isBusy}>
                   {isBusy ? "Working..." : "Start Project"}
                 </button>
               </form>
@@ -2068,6 +2309,7 @@ export default function SemPage() {
               title="Run Steps (uses current projectId)"
               isOpen={openSections.runSteps}
               onToggle={() => toggleSection("runSteps")}
+              id="step-run"
             >
               <div className="flex flex-col gap-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2076,12 +2318,15 @@ export default function SemPage() {
                     opening the visualizer.
                   </div>
                   <button
-                    className="rounded px-4 py-2 bg-blue-600 text-white disabled:opacity-50"
+                    className={primaryButton}
                     disabled={isBusy || !projectId}
                     onClick={runAllSteps}
                   >
                     {isBusy ? "Working..." : "Run All Steps (2-9)"}
                   </button>
+                </div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">
+                  Run individual steps
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   {[
@@ -2100,10 +2345,18 @@ export default function SemPage() {
                         : state.status === "error"
                         ? "Error"
                         : "Idle";
+                    const statusBadge =
+                      state.status === "running"
+                        ? badgeInfo
+                        : state.status === "success"
+                        ? badgeSuccess
+                        : state.status === "error"
+                        ? badgeDanger
+                        : badgeNeutral;
                     return (
                       <button
                         key={step.endpoint}
-                        className={`border rounded px-3 py-2 text-left disabled:opacity-50 ${
+                        className={`border rounded-md px-3 py-2 text-left transition-colors disabled:opacity-50 ${
                           state.status === "running"
                             ? "border-blue-300 bg-blue-50 dark:border-blue-500 dark:bg-blue-900/30"
                             : state.status === "error"
@@ -2114,19 +2367,8 @@ export default function SemPage() {
                         onClick={() => runStep(step.endpoint, step.label)}
                       >
                         <div className="font-medium">{step.label}</div>
-                        <div className="text-xs text-gray-600 flex items-center gap-2">
-                          <span
-                            className={`inline-block h-2 w-2 rounded-full ${
-                              state.status === "running"
-                                ? "bg-blue-500 animate-pulse"
-                                : state.status === "success"
-                                ? "bg-green-500"
-                                : state.status === "error"
-                                ? "bg-red-500"
-                                : "bg-gray-400"
-                            }`}
-                          />
-                          <span>{statusLabel}</span>
+                        <div className="mt-1 flex items-center gap-2 text-xs text-gray-600 dark:text-slate-300">
+                          <span className={statusBadge}>{statusLabel}</span>
                         </div>
                       </button>
                     );
@@ -2142,13 +2384,23 @@ export default function SemPage() {
               title="Step 7 – Campaign Structure"
               isOpen={openSections.step7}
               onToggle={() => toggleSection("step7")}
+              id="step-7"
             >
               <p className="text-sm text-gray-600">
                 Filter 08-keywords-with-scores by tier/flags to build a CSV with columns: keyword, avg_monthly_searches,
                 cpc (defaults: Tier A + paid_flag).
               </p>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className={badgeInfo}>Tiers: {selectedCampaignFilters.tiers.join(", ")}</span>
+                <span className={badgeNeutral}>
+                  Paid: {formatBooleanFlags(selectedCampaignFilters.paidFlags, "Paid", "Not Paid")}
+                </span>
+                <span className={badgeWarning}>
+                  SEO: {formatBooleanFlags(selectedCampaignFilters.seoFlags, "SEO", "Non-SEO")}
+                </span>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="space-y-2">
+                <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-slate-700 dark:bg-slate-900/40">
                   <div className="font-medium text-sm">Tiers</div>
                   {(["A", "B", "C"] as Tier[]).map((tier) => (
                     <label key={tier} className="flex items-center gap-2 text-sm">
@@ -2156,14 +2408,14 @@ export default function SemPage() {
                         type="checkbox"
                         checked={campaignFilters.tiers[tier]}
                         onChange={() => handleTierToggle(tier)}
-                        className="h-4 w-4"
+                        className="h-4 w-4 accent-blue-600"
                       />
                       <span>Tier {tier} ({tierDetails[tier].label})</span>
                     </label>
                   ))}
                 </div>
-                <div className="space-y-2">
-                  <div className="font-medium text-sm">Paid Flag</div>
+                <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                  <div className="font-medium text-sm">Paid keywords</div>
                   <div className="flex items-center gap-3 text-sm">
                     {(["true", "false"] as const).map((flag) => (
                       <label key={flag} className="flex items-center gap-1">
@@ -2171,15 +2423,15 @@ export default function SemPage() {
                           type="checkbox"
                           checked={campaignFilters.paidFlags[flag]}
                           onChange={() => handleFlagToggle("paidFlags", flag)}
-                          className="h-4 w-4"
+                          className="h-4 w-4 accent-blue-600"
                         />
-                        <span>{flag}</span>
+                        <span>{flag === "true" ? "Paid" : "Not Paid"}</span>
                       </label>
                     ))}
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <div className="font-medium text-sm">SEO Flag</div>
+                <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                  <div className="font-medium text-sm">SEO keywords</div>
                   <div className="flex items-center gap-3 text-sm">
                     {(["true", "false"] as const).map((flag) => (
                       <label key={flag} className="flex items-center gap-1">
@@ -2187,9 +2439,9 @@ export default function SemPage() {
                           type="checkbox"
                           checked={campaignFilters.seoFlags[flag]}
                           onChange={() => handleFlagToggle("seoFlags", flag)}
-                          className="h-4 w-4"
+                          className="h-4 w-4 accent-blue-600"
                         />
-                        <span>{flag}</span>
+                        <span>{flag === "true" ? "SEO" : "Non-SEO"}</span>
                       </label>
                     ))}
                   </div>
@@ -2197,100 +2449,133 @@ export default function SemPage() {
               </div>
               <div className="flex flex-wrap gap-3">
                 <button
-                  className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
+                  className={primaryButton}
                   disabled={isBusy || !projectId}
                   onClick={handleCampaignStructure}
                 >
                   {isBusy ? "Working..." : "Generate campaign CSV"}
-                                  </button>
-                                  <button
-                                    onClick={handleDownloadCampaignCsv}
-                                    className="border rounded px-4 py-2 hover:bg-gray-50 dark:border-slate-600 dark:hover:bg-slate-800"
-                                    disabled={!projectId}
-                                  >
-                                                        Download CSV
-                                                      </button>
-                                                    </div>
-                                    
-                                                  {campaignStats && (                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-gray-50 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700">
-                                  <div>
-                                    <div className="text-gray-500 uppercase text-xs font-semibold">Total Keywords</div>
-                                    <div className="text-lg font-medium">{campaignStats.totalKeywords}</div>
-                                  </div>
-                                  <div>
-                                    <div className="text-gray-500 uppercase text-xs font-semibold">Tier Breakdown</div>
-                                    <div className="space-x-2">
-                                      <span className="text-green-700 dark:text-green-400">A: {campaignStats.tierCounts.A || 0}</span>
-                                      <span className="text-blue-700 dark:text-blue-400">B: {campaignStats.tierCounts.B || 0}</span>
-                                      <span className="text-amber-700 dark:text-amber-400">C: {campaignStats.tierCounts.C || 0}</span>
-                                    </div>
-                                  </div>
-                                  <div>
-                                    <div className="text-gray-500 uppercase text-xs font-semibold">Avg Search Vol</div>
-                                    <div className="text-lg font-medium">
-                                      {campaignStats.avgSearchVolume
-                                        ? Math.round(campaignStats.avgSearchVolume).toLocaleString()
-                                        : "—"}
-                                    </div>
-                                  </div>
-                                  <div>
-                                    <div className="text-gray-500 uppercase text-xs font-semibold">Avg CPC (MYR)</div>
-                                    <div className="text-lg font-medium">
-                                      {campaignStats.avgCpc ? campaignStats.avgCpc.toFixed(2) : "—"}
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-                
-                              {campaignPreview.length > 0 && (
-                                <div className="space-y-2">                  <div className="font-medium text-sm">Preview (first 5 rows)</div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr>
-                          <th className="border-b px-2 py-1">keyword</th>
-                          <th className="border-b px-2 py-1">avg_monthly_searches</th>
-                          <th className="border-b px-2 py-1">cpc</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {campaignPreview.map((row, idx) => (
-                          <tr key={`${row.keyword}-${idx}`}>
-                            <td className="px-2 py-1 whitespace-pre-wrap">{row.keyword}</td>
-                            <td className="px-2 py-1">
-                              {row.avg_monthly_searches !== null && typeof row.avg_monthly_searches !== "undefined"
-                                ? Math.round(row.avg_monthly_searches)
-                                : ""}
-                            </td>
-                            <td className="px-2 py-1">{row.cpc ?? ""}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                </button>
+                <button
+                  onClick={handleDownloadCampaignCsv}
+                  className={secondaryButton}
+                  disabled={!projectId}
+                >
+                  Download CSV
+                </button>
+              </div>
+              {campaignStats && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-gray-50 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700">
+                  <div>
+                    <div className="text-gray-500 uppercase text-xs font-semibold">Total Keywords</div>
+                    <div className="text-lg font-medium">{campaignStats.totalKeywords}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500 uppercase text-xs font-semibold">Tier Breakdown</div>
+                    <div className="space-x-2">
+                      <span className="text-green-700 dark:text-green-400">A: {campaignStats.tierCounts.A || 0}</span>
+                      <span className="text-blue-700 dark:text-blue-400">B: {campaignStats.tierCounts.B || 0}</span>
+                      <span className="text-amber-700 dark:text-amber-400">C: {campaignStats.tierCounts.C || 0}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500 uppercase text-xs font-semibold">Avg Search Vol</div>
+                    <div className="text-lg font-medium">
+                      {campaignStats.avgSearchVolume
+                        ? Math.round(campaignStats.avgSearchVolume).toLocaleString()
+                        : "—"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500 uppercase text-xs font-semibold">Avg CPC (MYR)</div>
+                    <div className="text-lg font-medium">
+                      {campaignStats.avgCpc ? campaignStats.avgCpc.toFixed(2) : "—"}
+                    </div>
                   </div>
                 </div>
               )}
+                
+                              {campaignPreview.length > 0 && (
+                                <div className="space-y-2">
+                                  <div className="font-medium text-sm">Preview (first 5 rows)</div>
+                                  <div className="overflow-x-auto rounded-md border border-gray-200 dark:border-slate-700">
+                                    <table className="w-full text-left border-collapse text-sm">
+                                      <thead className="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-slate-800 dark:text-slate-300">
+                                        <tr>
+                                          <th className="border-b px-2 py-2">keyword</th>
+                                          <th className="border-b px-2 py-2">avg_monthly_searches</th>
+                                          <th className="border-b px-2 py-2">cpc</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {campaignPreview.map((row, idx) => (
+                                          <tr key={`${row.keyword}-${idx}`} className="odd:bg-white even:bg-gray-50 dark:odd:bg-slate-900 dark:even:bg-slate-800">
+                                            <td className="px-2 py-2 whitespace-pre-wrap">{row.keyword}</td>
+                                            <td className="px-2 py-2">
+                                              {row.avg_monthly_searches !== null && typeof row.avg_monthly_searches !== "undefined"
+                                                ? Math.round(row.avg_monthly_searches)
+                                                : ""}
+                                            </td>
+                                            <td className="px-2 py-2">{row.cpc ?? ""}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              )}
             </CollapsibleSection>
 
             <CollapsibleSection
               title="Step 8 – Campaign Plan"
               isOpen={openSections.step8}
               onToggle={() => toggleSection("step8")}
+              id="step-8"
             >
               <p className="text-sm text-gray-600">
                 Use the 09 Google Ads campaign CSV and initial user inputs (00) to ask OpenAI for a full campaign plan.
                 This call can take up to 3 minutes; a timer will run while waiting.
               </p>
-            <div className="flex flex-wrap items-center gap-3">
+              <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3 dark:border-slate-700 dark:bg-slate-900/40">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-gray-800 dark:text-slate-100">
+                      Campaign context
+                    </div>
+                    <div className="text-xs text-gray-500 dark:text-slate-400">
+                      Add extra guidance, constraints, or target details for the plan.
+                    </div>
+                  </div>
+                  <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700 dark:text-slate-200">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-blue-600"
+                      checked={campaignPlanAppendContext}
+                      onChange={(e) => setCampaignPlanAppendContext(e.target.checked)}
+                    />
+                    Append to Step 1 context
+                  </label>
+                </div>
+                <textarea
+                  className="w-full border rounded-md px-3 py-2 text-sm bg-white shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-blue-400 dark:focus:ring-blue-900/50 min-h-[140px]"
+                  value={campaignPlanContext}
+                  onChange={(e) => setCampaignPlanContext(e.target.value)}
+                  placeholder="e.g. prioritize high-margin services, exclude brand competitors, keep tone concise, include geo-specific offers"
+                />
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 dark:text-slate-400">
+                  <span>When enabled, Step 1 context is used first and this text is appended after a --- separator.</span>
+                  <span>{campaignPlanContext.trim().length} characters</span>
+                </div>
+              </div>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
               <button
-                className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
+                className={primaryButton}
                 disabled={isBusy || !projectId}
                 onClick={handleGenerateCampaignPlan}
                 >
                   {isStep8Running ? "Working..." : "Generate campaign plan"}
                 </button>
                 {campaignPlanResult && (
-                  <span className="text-sm text-gray-600">
+                  <span className={badgeNeutral}>
                     Last saved: {campaignPlanResult.fileName} ({campaignPlanResult.campaigns.length} campaigns)
                   </span>
                 )}
@@ -2313,14 +2598,15 @@ export default function SemPage() {
               title="Step 9 – Visualize & QA"
               isOpen={openSections.step9}
               onToggle={() => toggleSection("step9")}
+              id="step-9"
             >
               <p className="text-sm text-gray-600">
-                Launch the new visualization workspace to explore Campaign → Ad Group → Ads/Keywords/Negatives or switch
-                to QA tables. On first load, we copy your 10-*.json to 10-campaign-plan.backup.json before edits.
+                Run Step 9 to enrich the latest 10-*.json into 11-*.json, then open the visualization workspace to explore
+                Campaign → Ad Group → Ads/Keywords/Negatives or switch to QA tables.
               </p>
               <div className="flex flex-wrap items-center gap-3">
                 <a
-                  className="bg-blue-600 text-white px-4 py-2 rounded inline-flex items-center gap-2"
+                  className={primaryButton}
                   href={`/sem/visualizer${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`}
                   target="_blank"
                   rel="noreferrer"
@@ -2329,15 +2615,15 @@ export default function SemPage() {
                   <span aria-hidden>↗</span>
                 </a>
                 <button
-                  className="border rounded px-4 py-2 hover:bg-red-50 text-red-700 border-red-200 dark:border-red-900/40 dark:text-red-300 dark:hover:bg-red-900/20 disabled:opacity-50"
+                  className={destructiveButton}
                   onClick={handleRedoVisualization}
                   disabled={isBusy || !projectId}
-                  title="Delete enriched/backup files to reload from Step 8"
+                  title="Run Step 9 to enrich 10-*.json into 11-*.json"
                 >
                   Re-do / Reset Chart
                 </button>
                 {resetNotification && (
-                  <span className="text-sm text-green-600 font-medium animate-pulse">
+                  <span className={`${badgeSuccess} animate-pulse`}>
                     {resetNotification}
                   </span>
                 )}
@@ -2350,7 +2636,7 @@ export default function SemPage() {
                 Google Ads/Editor.
               </div>
               {availableFiles.some((file) => file.startsWith("10-") || file.startsWith("11-")) && (
-                <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2 dark:border-green-900/40 dark:bg-green-900/20 dark:text-green-200">
+                <div className={`${badgeSuccess} rounded-md`}>
                   Found{" "}
                   {availableFiles.filter((file) => file.startsWith("10-") || file.startsWith("11-")).length} file(s)
                   starting with 10-/11- for this project.
@@ -2362,70 +2648,87 @@ export default function SemPage() {
               title="Step 10 – Landing Page Plan"
               isOpen={openSections.step10}
               onToggle={() => toggleSection("step10")}
+              id="step-10"
             >
               <p className="text-sm text-gray-600">
                 Generate the input JSON (12_1-...) containing website, goal, context, keywords, and locations, which will be used for the landing page generation process.
               </p>
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-200">
-                  Additional Context (optional)
-                </label>
+              <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3 dark:border-slate-700 dark:bg-slate-900/40">
+                <div>
+                  <div className="text-sm font-semibold text-gray-800 dark:text-slate-100">Input context</div>
+                  <div className="text-xs text-gray-500 dark:text-slate-400">
+                    Add pricing, constraints, differentiators, target persona, compliance notes, or tone guidance.
+                  </div>
+                </div>
                 <textarea
-                  className="w-full border rounded px-3 py-2 text-sm bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 min-h-[80px]"
-                  placeholder="Add any specific instructions or new details for the landing page plan here..."
+                  className="w-full border rounded-md px-3 py-2 text-sm bg-white shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-blue-400 dark:focus:ring-blue-900/50 min-h-[110px]"
+                  placeholder="e.g. target SME owners, highlight 24/7 support, avoid aggressive claims, include transparent pricing"
                   value={landingPageContext}
                   onChange={(e) => setLandingPageContext(e.target.value)}
                 />
-                <p className="text-xs text-gray-500 italic">
-                  Description: Anything important (pricing range, constraints, differentiators, target persona, compliance notes, operating hours, service process, design preference, copywriting tone, etc.).
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 dark:text-slate-400">
+                  <span>Keep it concise; this becomes part of the plan prompt.</span>
+                  <span>{landingPageContext.trim().length} characters</span>
+                </div>
               </div>
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="mt-4 flex flex-wrap items-center gap-3">
                 <button
-                  className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
+                  className={primaryButton}
                   disabled={isBusy || !projectId}
                   onClick={() => runLandingPageInputStep()}
                 >
                   {stepStatuses.landingPageInput.status === "running" ? "Working..." : "Generate Input JSON"}
                 </button>
                 {stepCompletion.landingPageInput && (
-                  <span className="text-sm text-green-700 font-medium">
-                    Input JSON generated! {landingPageGeneratedAt && `(at ${landingPageGeneratedAt})`}
+                  <span className={badgeSuccess}>
+                    Input JSON ready {landingPageGeneratedAt && `· ${landingPageGeneratedAt}`}
                   </span>
                 )}
               </div>
 
               {/* Step 10.2: Generate Plan */}
               {stepCompletion.landingPageInput && (
-                <div className="mt-6 pt-4 border-t dark:border-slate-700">
-                  <h4 className="text-sm font-semibold mb-3">10.2 Generate Landing Page Plan (OpenAI)</h4>
-                  <div className="flex flex-wrap items-center gap-4">
+                <div
+                  id="step-10-2"
+                  className="mt-6 rounded-lg border border-gray-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900/40"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-800 dark:text-slate-100">
+                        10.2 Generate Landing Page Plan (OpenAI)
+                      </h4>
+                      <p className="text-xs text-gray-500 dark:text-slate-400">
+                        Uses the input JSON to draft the full landing page plan.
+                      </p>
+                    </div>
+                    {landingPagePlanResult && !isGeneratingPlan && (
+                      <span className={badgeSuccess}>
+                        Plan ready {landingPagePlanResult.generatedAt && `· ${landingPagePlanResult.generatedAt}`}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-4">
                     <button
                       onClick={runLandingPagePlanGeneration}
                       disabled={isGeneratingPlan}
-                      className="px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
+                      className={primaryButton}
                     >
                       {isGeneratingPlan ? "Generating..." : "Generate Landing Page Plan"}
                     </button>
                     
                     {isGeneratingPlan && (
-                      <span className="text-sm text-gray-600 animate-pulse">
+                      <span className="text-xs text-gray-600 animate-pulse">
                         Time elapsed: {Math.floor(planGenerationTime / 60)}m {planGenerationTime % 60}s (est. ~9 mins)
                       </span>
                     )}
 
                     {landingPagePlanResult && !isGeneratingPlan && (
-                      <div className="flex items-center gap-3">
-                         <span className="text-sm text-green-700 font-medium">
-                          Plan completed at {landingPagePlanResult.generatedAt}
-                        </span>
-                        <button
-                          onClick={() => setShowPlanModal(true)}
-                          className="px-3 py-1.5 border border-gray-300 rounded text-sm hover:bg-gray-50 dark:border-slate-600 dark:hover:bg-slate-700"
-                        >
-                          View Plan
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => setShowPlanModal(true)}
+                        className={secondaryButtonSm}
+                      >
+                        View Plan
+                      </button>
                     )}
                   </div>
                 </div>
@@ -2448,7 +2751,7 @@ export default function SemPage() {
                           setEditedPlanContent(landingPagePlanResult.content);
                           setIsEditingPlan(true);
                         }}
-                        className="text-sm px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-100"
+                        className={secondaryButtonSm}
                       >
                         Edit
                       </button>
@@ -2478,13 +2781,13 @@ export default function SemPage() {
                                setIsBusy(false);
                              }
                           }}
-                          className="text-sm px-3 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200 dark:bg-green-900 dark:text-green-100"
+                          className={primaryButtonSm}
                         >
                           Save
                         </button>
                          <button 
                           onClick={() => setIsEditingPlan(false)}
-                          className="text-sm px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 dark:bg-slate-700 dark:text-gray-300"
+                          className={secondaryButtonSm}
                         >
                           Cancel
                         </button>
@@ -2517,13 +2820,13 @@ export default function SemPage() {
                     navigator.clipboard.writeText(isEditingPlan ? editedPlanContent : landingPagePlanResult.content);
                     alert("Copied to clipboard!");
                   }}
-                  className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                  className={primaryButton}
                 >
                   Copy to Clipboard
                 </button>
                 <button
                   onClick={() => setShowPlanModal(false)}
-                  className="px-4 py-2 bg-gray-200 text-gray-800 text-sm rounded hover:bg-gray-300 dark:bg-slate-700 dark:text-white dark:hover:bg-slate-600"
+                  className={secondaryButton}
                 >
                   Close
                 </button>
@@ -2590,6 +2893,7 @@ export default function SemPage() {
                   { key: "campaignPlan", label: "Step 8 – Campaign Plan" },
                   { key: "visualizer", label: "Step 9 – Visualize & QA" },
                   { key: "landingPageInput", label: "Step 10 – Landing Page Input" },
+                  { key: "landingPagePlan", label: "Step 10.2 – Landing Page Plan" },
                 ] as Array<{ key: StepKey; label: string }>).map((item) => {
                   const state = stepStatuses[item.key];
                   const color =
@@ -2601,7 +2905,19 @@ export default function SemPage() {
                       ? "text-red-600"
                       : "text-gray-600";
                   return (
-                    <div key={item.key} className="flex items-center gap-2 border rounded px-3 py-2">
+                    <div
+                      key={item.key}
+                      className="flex items-center gap-2 border rounded px-3 py-2 cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-slate-800"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => scrollToStep(item.key)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          scrollToStep(item.key);
+                        }
+                      }}
+                    >
                       <span
                         className={`inline-block h-2 w-2 rounded-full ${
                           state.status === "running"
@@ -2632,7 +2948,7 @@ export default function SemPage() {
                   </div>
                 </div>
                 <button
-                  className="border rounded px-3 py-2 bg-white hover:bg-blue-50 text-sm disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                  className={secondaryButton}
                   onClick={() => projectId && refreshProjectFiles(projectId)}
                   disabled={!projectId || isFetchingFiles}
                 >
@@ -2688,20 +3004,45 @@ export default function SemPage() {
               <div className="flex flex-wrap items-center gap-3 text-sm">
                 <button
                   type="button"
-                  className="border rounded px-3 py-2 bg-white hover:bg-blue-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                  className={secondaryButtonSm}
+                  disabled={!projectId || filteredFiles.length === 0}
+                  onClick={selectAllFilteredFiles}
+                >
+                  Select all ({filteredFiles.length})
+                </button>
+                <button
+                  type="button"
+                  className={secondaryButtonSm}
+                  disabled={!projectId || selectedDownloadCount === 0}
+                  onClick={clearFileSelection}
+                >
+                  Clear selection
+                </button>
+                <button
+                  type="button"
+                  className={secondaryButton}
                   disabled={selectedDownloadCount === 0 || isDownloadingFiles || !projectId}
                   onClick={() => void downloadSelectedFiles()}
                 >
                   {isDownloadingFiles ? "Downloading..." : `Download selected (${selectedDownloadCount})`}
+                </button>
+                <button
+                  type="button"
+                  className={destructiveButton}
+                  disabled={selectedDownloadCount === 0 || isDeletingFiles || !projectId}
+                  onClick={() => void deleteSelectedFiles()}
+                >
+                  {isDeletingFiles ? "Deleting..." : `Delete selected (${selectedDownloadCount})`}
                 </button>
                 <div className="text-gray-600 dark:text-slate-300">
                   Click a card or its checkbox to select. Hover the number to see the full filename.
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-72 overflow-y-auto">
-                {filteredFiles.map((file) => {
+                {filteredFiles.map((file, index) => {
                   const isSelected = selectedFilesForDownload.has(file);
                   const shortLabel = getShortFileLabel(file);
+                  const tooltipPositionClass = index < 2 ? "top-full mt-1" : "bottom-full mb-1";
                   const baseClasses =
                     "border rounded px-3 py-2 flex items-start justify-between gap-3 bg-white hover:bg-blue-50 transition-colors cursor-pointer dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700";
                   const selectedClasses = isSelected
@@ -2734,7 +3075,9 @@ export default function SemPage() {
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-semibold relative inline-flex items-center" title={file}>
                               {shortLabel}
-                              <span className="absolute left-0 top-full mt-1 z-10 hidden group-hover:flex whitespace-pre rounded bg-gray-900 px-2 py-1 text-xs text-white shadow-lg">
+                              <span
+                                className={`absolute left-0 ${tooltipPositionClass} z-20 hidden group-hover:flex whitespace-pre rounded bg-gray-900 px-2 py-1 text-xs text-white shadow-lg`}
+                              >
                                 {file}
                               </span>
                             </span>
@@ -2747,7 +3090,7 @@ export default function SemPage() {
                       <div className="flex items-center gap-2 shrink-0">
                         <button
                           type="button"
-                          className="border rounded p-1 bg-white hover:bg-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700"
+                          className={iconButton}
                           onClick={(e) => {
                             e.stopPropagation();
                             openFile(file);
@@ -2759,7 +3102,7 @@ export default function SemPage() {
                         </button>
                         <button
                           type="button"
-                          className="border rounded p-1 bg-white hover:bg-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700"
+                          className={iconButton}
                           onClick={(e) => {
                             e.stopPropagation();
                             void downloadFile(file);
@@ -2797,7 +3140,7 @@ export default function SemPage() {
                 <div className="flex items-center gap-2 text-sm text-gray-600 truncate dark:text-slate-300">
                   <span className="truncate">{selectedFile}</span>
                   {fileContentMeta?.isJson && (
-                    <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-200">
+                    <span className={badgeSuccess}>
                       JSON
                     </span>
                   )}
@@ -2805,12 +3148,12 @@ export default function SemPage() {
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  className="border rounded px-3 py-2 text-sm bg-white hover:bg-blue-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                  className={secondaryButton}
                   onClick={() => void downloadFile(selectedFile)}
                 >
                   Download
                 </button>
-                <button className="border rounded px-3 py-2 dark:border-slate-600" onClick={closeFileViewer}>
+                <button className={secondaryButton} onClick={closeFileViewer}>
                   Close
                 </button>
               </div>
@@ -2825,7 +3168,7 @@ export default function SemPage() {
                     {fileContentMeta?.isJson && (
                       <button
                         type="button"
-                        className="border rounded px-3 py-2 text-sm bg-white hover:bg-blue-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                        className={secondaryButton}
                         onClick={formatJsonContent}
                         disabled={isSavingFileContent}
                       >
@@ -2844,14 +3187,14 @@ export default function SemPage() {
                   />
                   <div className="flex items-center justify-end gap-2">
                     <button
-                      className="border rounded px-3 py-2 bg-white hover:bg-gray-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                      className={secondaryButton}
                       onClick={closeFileViewer}
                       type="button"
                     >
                       Cancel
                     </button>
                     <button
-                      className="border rounded px-3 py-2 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                      className={primaryButton}
                       onClick={() => void saveFileEdits()}
                       disabled={isSavingFileContent}
                     >
@@ -2875,10 +3218,10 @@ export default function SemPage() {
             </div>
             <div className="px-4 py-3 text-sm text-gray-700 dark:text-slate-200">{confirmDialog.message}</div>
             <div className="flex justify-end gap-3 px-4 py-3 border-t dark:border-slate-700">
-              <button className="border rounded px-4 py-2 dark:border-slate-600" onClick={() => handleConfirmResponse(false)}>
+              <button className={secondaryButton} onClick={() => handleConfirmResponse(false)}>
                 {confirmDialog.cancelLabel || "Cancel"}
               </button>
-              <button className="bg-blue-600 text-white rounded px-4 py-2" onClick={() => handleConfirmResponse(true)}>
+              <button className={primaryButton} onClick={() => handleConfirmResponse(true)}>
                 {confirmDialog.confirmLabel || "Confirm"}
               </button>
             </div>

@@ -10,6 +10,11 @@ interface StoredInitFile {
   normalizedInput?: NormalizedProjectInitInput;
 }
 
+interface CampaignPlanOptions {
+  additionalContext?: string;
+  appendFromPrevious?: boolean;
+}
+
 async function loadNormalizedInput(projectId: string): Promise<NormalizedProjectInitInput> {
   try {
     const stored = await readProjectJson<StoredInitFile>(projectId, INPUT_FILE);
@@ -30,10 +35,34 @@ async function loadKeywordCsv(projectId: string): Promise<string> {
   }
 }
 
-export async function generateCampaignPlan(projectId: string) {
+function buildCampaignContext(
+  baseContext: string | undefined,
+  additionalContext: string | undefined,
+  appendFromPrevious: boolean,
+): string {
+  const base = typeof baseContext === "string" ? baseContext : "";
+  const additional = typeof additionalContext === "string" ? additionalContext : "";
+  const additionalTrimmed = additional.trim();
+  if (!additionalTrimmed) return base;
+
+  if (appendFromPrevious) {
+    const baseTrimmed = base.trim();
+    if (!baseTrimmed) return additional;
+    return `${base}\n\n---\n\n${additional}`;
+  }
+
+  return additional;
+}
+
+export async function generateCampaignPlan(projectId: string, options: CampaignPlanOptions = {}) {
   const normalizedInput = await loadNormalizedInput(projectId);
   const keywordData = await loadKeywordCsv(projectId);
-  const parsed = await fetchCampaignPlan(normalizedInput, keywordData);
+  const context = buildCampaignContext(
+    normalizedInput.context,
+    options.additionalContext,
+    options.appendFromPrevious ?? true,
+  );
+  const parsed = await fetchCampaignPlan(normalizedInput, keywordData, context);
 
   const campaigns = Array.isArray(parsed?.Campaigns) ? parsed.Campaigns : [];
   const sortedCampaigns = [...campaigns].sort((a, b) => {
