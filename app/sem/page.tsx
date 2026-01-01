@@ -353,7 +353,6 @@ export default function SemPage() {
     step9: true,
     step10: true,
   });
-  const [resetNotification, setResetNotification] = useState<string | null>(null);
   const [campaignPlanContext, setCampaignPlanContext] = useState<string>("");
   const [campaignPlanAppendContext, setCampaignPlanAppendContext] = useState<boolean>(true);
   const [landingPageContext, setLandingPageContext] = useState<string>("");
@@ -1373,7 +1372,6 @@ export default function SemPage() {
     setProgress(0);
     setStep1Elapsed(0);
     setStep8Elapsed(0);
-    setResetNotification(null);
     setStepStatuses(buildInitialStepStatuses());
   }, [cancelStepProgressPoll, projectId]);
 
@@ -2010,9 +2008,7 @@ export default function SemPage() {
       const formatted = formatMalaysiaTime(completedAt);
       updateStepStatus("visualizer", { status: "success", message: `Completed ${formatted}` });
       push(`${step9LogPrefix} Completed at ${formatted}`);
-      setResetNotification(`Step 9 completed at ${formatted}`);
-      setTimeout(() => setResetNotification(null), 5000);
-      window.alert(`Step 9 completed at ${formatted}`);
+      // Completion timestamp is shown in the Step 9 panel.
       openVisualizerTab();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Step 9 failed";
@@ -2633,9 +2629,9 @@ export default function SemPage() {
                 >
                   Re-do / Reset Chart
                 </button>
-                {resetNotification && (
-                  <span className={`${badgeSuccess} animate-pulse`}>
-                    {resetNotification}
+                {step9CompletedAt && (
+                  <span className={badgeSuccess}>
+                    Completed at {formatMalaysiaTime(step9CompletedAt)}
                   </span>
                 )}
                 <span className="text-sm text-gray-700 dark:text-slate-200">

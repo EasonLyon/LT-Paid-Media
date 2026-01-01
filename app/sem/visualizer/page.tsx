@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Workbook, type Row } from "exceljs";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { CampaignPlan, CampaignPlanAdGroup, CampaignPlanKeyword, NormalizedProjectInitInput, OptimizationPlaybook } from "@/types/sem";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -292,10 +292,53 @@ const EXPORT_ALL_HEADERS = [
   "Type",
 ] as const;
 
+type NameColor = {
+  light: string;
+  dark: string;
+  argb: string;
+};
+
+const CAMPAIGN_NAME_PALETTE: NameColor[] = [
+  { light: "#E1F0FF", dark: "#0B3B66", argb: "FFE1F0FF" },
+  { light: "#FCE7F3", dark: "#5B1A3B", argb: "FFFCE7F3" },
+  { light: "#E7F5E8", dark: "#1E4A2F", argb: "FFE7F5E8" },
+  { light: "#FFF3E0", dark: "#6A3D1A", argb: "FFFFF3E0" },
+  { light: "#EDE7F6", dark: "#3B2A6B", argb: "FFEDE7F6" },
+  { light: "#E0F7FA", dark: "#0F4B52", argb: "FFE0F7FA" },
+  { light: "#FFF7E6", dark: "#6B4B0F", argb: "FFFFF7E6" },
+  { light: "#E8F5FF", dark: "#103F63", argb: "FFE8F5FF" },
+];
+
+const AD_GROUP_NAME_PALETTE: NameColor[] = [
+  { light: "#E8F5E9", dark: "#1C4A2B", argb: "FFE8F5E9" },
+  { light: "#E3F2FD", dark: "#0E3D66", argb: "FFE3F2FD" },
+  { light: "#F3E5F5", dark: "#4A1E5C", argb: "FFF3E5F5" },
+  { light: "#FFF8E1", dark: "#5A4416", argb: "FFFFF8E1" },
+  { light: "#E0F2F1", dark: "#0F4A44", argb: "FFE0F2F1" },
+  { light: "#FCE4EC", dark: "#5B1A33", argb: "FFFCE4EC" },
+  { light: "#E8EAF6", dark: "#2F2A5C", argb: "FFE8EAF6" },
+  { light: "#F1F8E9", dark: "#344B18", argb: "FFF1F8E9" },
+];
+
 function extractKeywordsAudience(name: string): string {
   if (!name) return "";
   const parts = name.split("|").map((part) => part.trim()).filter(Boolean);
   return parts.length ? parts[parts.length - 1] : name;
+}
+
+function hashName(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+function pickNameColor(value: string, palette: NameColor[]): NameColor | null {
+  if (!value || palette.length === 0) return null;
+  const index = hashName(value) % palette.length;
+  return palette[index] ?? null;
 }
 
 function computeKeywordAverages(list: Array<Pick<CampaignPlanKeyword, "AvgMonthlySearches" | "CPC" | "CompetitionIndex">>) {
@@ -360,7 +403,81 @@ const AD_GROUP_ROW_FILLS: Record<AdGroupTableRow["type"], string> = {
   Keyword: "FFFFF5CC",
 };
 const AD_GROUP_ALERT_FILL = "FFFFC7CE";
+const AD_GROUP_ROW_FILLS_HEX: Record<AdGroupTableRow["type"], string> = {
+  Headline: "#D9E8FF",
+  Description: "#E6F4EA",
+  Keyword: "#FFF5CC",
+};
+const AD_GROUP_ALERT_FILL_HEX = "#FFC7CE";
+const AD_GROUP_ROW_DARK_CLASSES: Record<AdGroupTableRow["type"], string> = {
+  Headline: "dark:bg-blue-900/40",
+  Description: "dark:bg-emerald-900/30",
+  Keyword: "dark:bg-amber-900/30",
+};
+const AD_GROUP_ALERT_DARK_CLASS = "dark:bg-red-900/40";
 
+function getAdGroupTypeCellStyle(type: AdGroupTableRow["type"]): CSSProperties | undefined {
+  const fill = AD_GROUP_ROW_FILLS_HEX[type];
+  return fill ? { backgroundColor: fill } : undefined;
+}
+
+function getAdGroupTypeCellClass(type: AdGroupTableRow["type"]): string {
+  return AD_GROUP_ROW_DARK_CLASSES[type] ?? "";
+}
+
+function getAdGroupCharCellStyle(
+  type: AdGroupTableRow["type"],
+  value: number | null,
+): CSSProperties | undefined {
+  const baseFill = AD_GROUP_ROW_FILLS_HEX[type];
+  if (!baseFill) return undefined;
+  if (type === "Headline" && typeof value === "number" && value > 30) {
+    return { backgroundColor: AD_GROUP_ALERT_FILL_HEX };
+  }
+  if (type === "Description" && typeof value === "number" && value > 90) {
+    return { backgroundColor: AD_GROUP_ALERT_FILL_HEX };
+  }
+  return { backgroundColor: baseFill };
+}
+
+function getAdGroupCharCellClass(type: AdGroupTableRow["type"], value: number | null): string {
+  if (type === "Headline" && typeof value === "number" && value > 30) return AD_GROUP_ALERT_DARK_CLASS;
+  if (type === "Description" && typeof value === "number" && value > 90) return AD_GROUP_ALERT_DARK_CLASS;
+  return AD_GROUP_ROW_DARK_CLASSES[type] ?? "";
+}
+
+function getNameCellStyle(name: string, palette: NameColor[]): CSSProperties | undefined {
+  const color = pickNameColor(name, palette);
+  if (!color) return undefined;
+  return {
+    "--name-color": color.light,
+    "--name-color-dark": color.dark,
+  } as CSSProperties;
+}
+
+function applyNameCellFill(
+  value: string | number | boolean | null,
+  palette: NameColor[],
+  excelRow: Row,
+  columnIndex: number,
+) {
+  if (typeof value !== "string" || value.trim() === "") return;
+  const color = pickNameColor(value.trim(), palette);
+  if (!color) return;
+  const cell = excelRow.getCell(columnIndex);
+  cell.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: color.argb },
+  };
+}
+
+function applyCampaignRowStyle(row: ExportRow, _rowIndex: number, excelRow: Row, columns: string[]) {
+  const campaignIndex = columns.indexOf("Campaign Name");
+  if (campaignIndex !== -1) {
+    applyNameCellFill(row["Campaign Name"], CAMPAIGN_NAME_PALETTE, excelRow, campaignIndex + 1);
+  }
+}
 function applyAdGroupRowStyle(row: ExportRow, _rowIndex: number, excelRow: Row, columns: string[]) {
   const type = row.Type;
   if (typeof type !== "string") return;
@@ -368,6 +485,8 @@ function applyAdGroupRowStyle(row: ExportRow, _rowIndex: number, excelRow: Row, 
   if (!fillColor) return;
   const typeIndex = columns.indexOf("Type");
   const characterIndex = columns.indexOf("Char/Vol");
+  const campaignIndex = columns.indexOf("Campaign Name");
+  const nameIndex = columns.indexOf("Name");
   if (typeIndex !== -1) {
     const cell = excelRow.getCell(typeIndex + 1);
     cell.fill = {
@@ -375,6 +494,12 @@ function applyAdGroupRowStyle(row: ExportRow, _rowIndex: number, excelRow: Row, 
       pattern: "solid",
       fgColor: { argb: fillColor },
     };
+  }
+  if (campaignIndex !== -1) {
+    applyNameCellFill(row["Campaign Name"], CAMPAIGN_NAME_PALETTE, excelRow, campaignIndex + 1);
+  }
+  if (nameIndex !== -1) {
+    applyNameCellFill(row.Name, AD_GROUP_NAME_PALETTE, excelRow, nameIndex + 1);
   }
   if (characterIndex !== -1) {
     const characterCell = excelRow.getCell(characterIndex + 1);
@@ -1841,7 +1966,10 @@ function CampaignVisualizerPageContent() {
                         </thead>
                         <tbody>
                           {sortedPerformanceRows.map((row) => (
-                            <tr key={row.CampaignName} className="odd:bg-gray-50 dark:odd:bg-slate-900/40">
+                            <tr
+                              key={row.CampaignName}
+                              className="odd:bg-gray-50 transition-colors hover:bg-slate-200/70 dark:odd:bg-slate-900/40 dark:hover:bg-slate-700/60"
+                            >
                               <td className="px-2 py-2">{row.CampaignName}</td>
                               <td className="px-2 py-2">{formatCurrency(row.monthlySpend)}</td>
                               <td className="px-2 py-2">{formatDecimal(Math.round(row.estimatedClicks), 0)}</td>
@@ -2058,6 +2186,7 @@ function CampaignVisualizerPageContent() {
                           name: "Campaign Type",
                           columns: CAMPAIGN_TABLE_COLUMNS.map((col) => col.label),
                           rows: campaignExportRows,
+                          rowStyle: applyCampaignRowStyle,
                         },
                         {
                           name: "Ad Group",
@@ -2100,6 +2229,7 @@ function CampaignVisualizerPageContent() {
                       name: "Campaign Type",
                       columns: CAMPAIGN_TABLE_COLUMNS.map((col) => col.label),
                       rows: campaignExportRows,
+                      rowStyle: applyCampaignRowStyle,
                     },
                   ],
                   buildExportFilename(entityValue, "media-plan.xlsx"),
@@ -2119,7 +2249,10 @@ function CampaignVisualizerPageContent() {
                   </thead>
                   <tbody>
                     {campaignTableRows.map((row, idx) => (
-                      <tr key={`${row.campaignName}-${idx}`} className="odd:bg-gray-50 dark:odd:bg-slate-900/40">
+                      <tr
+                        key={`${row.campaignName}-${idx}`}
+                        className="odd:bg-gray-50 transition-colors hover:bg-slate-200/70 dark:odd:bg-slate-900/40 dark:hover:bg-slate-700/60"
+                      >
                         <td className="px-2 py-1">{row.platform}</td>
                         <td className="px-2 py-1">{row.funnel}</td>
                         <td className="px-2 py-1">
@@ -2129,7 +2262,12 @@ function CampaignVisualizerPageContent() {
                             placeholder="Project ID"
                           />
                         </td>
-                        <td className="px-2 py-1">{row.campaignName}</td>
+                        <td
+                          className={cn("px-2 py-1 bg-[var(--name-color)] dark:bg-[var(--name-color-dark)]")}
+                          style={getNameCellStyle(row.campaignName, CAMPAIGN_NAME_PALETTE)}
+                        >
+                          {row.campaignName}
+                        </td>
                         <td className="px-2 py-1">{row.campaignType}</td>
                         <td className="px-2 py-1">{row.objective}</td>
                         <td className="px-2 py-1">{row.keywordsAudience}</td>
@@ -2180,12 +2318,44 @@ function CampaignVisualizerPageContent() {
                   </thead>
                   <tbody>
                     {adGroupTableRows.map((row, idx) => (
-                      <tr key={`${row.name}-${row.type}-${idx}`} className="odd:bg-gray-50 dark:odd:bg-slate-900/40">
-                        <td className="px-2 py-1">{row.campaignName}</td>
-                        <td className="px-2 py-1">{row.name}</td>
+                      <tr
+                        key={`${row.name}-${row.type}-${idx}`}
+                        className="odd:bg-gray-50 transition-colors hover:bg-slate-200/70 dark:odd:bg-slate-900/40 dark:hover:bg-slate-700/60"
+                      >
+                        <td
+                          className={cn("px-2 py-1 bg-[var(--name-color)] dark:bg-[var(--name-color-dark)]")}
+                          style={getNameCellStyle(row.campaignName, CAMPAIGN_NAME_PALETTE)}
+                        >
+                          {row.campaignName}
+                        </td>
+                        <td
+                          className={cn("px-2 py-1 bg-[var(--name-color)] dark:bg-[var(--name-color-dark)]")}
+                          style={getNameCellStyle(row.name, AD_GROUP_NAME_PALETTE)}
+                        >
+                          {row.name}
+                        </td>
                         <td className="px-2 py-1">{row.text}</td>
-                        <td className="px-2 py-1">{row.character ?? ""}</td>
-                        <td className="px-2 py-1">{row.type}</td>
+                        <td
+                          className={cn(
+                            "px-2 py-1",
+                            getAdGroupCharCellClass(
+                              row.type,
+                              row.type === "Keyword" ? row.avgMonthlySearches : row.character,
+                            ),
+                          )}
+                          style={getAdGroupCharCellStyle(
+                            row.type,
+                            row.type === "Keyword" ? row.avgMonthlySearches : row.character,
+                          )}
+                        >
+                          {row.type === "Keyword" ? row.avgMonthlySearches ?? "" : row.character ?? ""}
+                        </td>
+                        <td
+                          className={cn("px-2 py-1", getAdGroupTypeCellClass(row.type))}
+                          style={getAdGroupTypeCellStyle(row.type)}
+                        >
+                          {row.type}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -3023,7 +3193,10 @@ function AdGroupTabs({
             </thead>
             <tbody>
               {keywords.map((kw, idx) => (
-                <tr key={idx} className="odd:bg-gray-50 dark:odd:bg-slate-900/40">
+                <tr
+                  key={idx}
+                  className="odd:bg-gray-50 transition-colors hover:bg-slate-200/70 dark:odd:bg-slate-900/40 dark:hover:bg-slate-700/60"
+                >
                   <td className="px-2 py-1">{kw.Keyword}</td>
                   <td className="px-2 py-1">{kw.MatchType}</td>
                   <td className="px-2 py-1">{formatNumber(kw.AvgMonthlySearches ?? null)}</td>
