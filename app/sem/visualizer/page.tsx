@@ -4,7 +4,14 @@ import Link from "next/link";
 import { Workbook, type Row } from "exceljs";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { CampaignPlan, CampaignPlanAdGroup, CampaignPlanKeyword, NormalizedProjectInitInput, OptimizationPlaybook } from "@/types/sem";
+import {
+  CampaignPlan,
+  CampaignPlanAdGroup,
+  CampaignPlanAdTextWithCount,
+  CampaignPlanKeyword,
+  NormalizedProjectInitInput,
+  OptimizationPlaybook,
+} from "@/types/sem";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -1223,6 +1230,65 @@ function CampaignVisualizerPageContent() {
     setSelectedCampaignSettings(null);
   };
 
+  const updateAdText = useCallback(
+    (
+      campaignIndex: number,
+      adGroupIndex: number,
+      adIndex: number,
+      type: "headline" | "description",
+      textIndex: number,
+      nextText: string,
+    ) => {
+      setCampaigns((prev) => {
+        const campaign = prev[campaignIndex];
+        if (!campaign?.AdGroups?.length) return prev;
+        const adGroup = campaign.AdGroups[adGroupIndex];
+        if (!adGroup?.ResponsiveSearchAds?.length) return prev;
+        const ad = adGroup.ResponsiveSearchAds[adIndex];
+        if (!ad) return prev;
+
+        const updateMeta = (
+          meta: CampaignPlanAdTextWithCount[] | undefined,
+          texts: string[],
+          index: number,
+        ) => {
+          const base = meta && meta.length === texts.length
+            ? [...meta]
+            : texts.map((text) => ({ Text: text, CharCount: text.length }));
+          base[index] = { Text: texts[index], CharCount: texts[index].length };
+          return base;
+        };
+
+        const nextAds = [...adGroup.ResponsiveSearchAds];
+        const nextAd = { ...ad };
+
+        if (type === "headline") {
+          const nextHeadlines = [...(ad.Headlines ?? [])];
+          if (typeof nextHeadlines[textIndex] === "undefined") return prev;
+          nextHeadlines[textIndex] = nextText;
+          nextAd.Headlines = nextHeadlines;
+          nextAd.HeadlinesMeta = updateMeta(ad.HeadlinesMeta, nextHeadlines, textIndex);
+        } else {
+          const nextDescriptions = [...(ad.Descriptions ?? [])];
+          if (typeof nextDescriptions[textIndex] === "undefined") return prev;
+          nextDescriptions[textIndex] = nextText;
+          nextAd.Descriptions = nextDescriptions;
+          nextAd.DescriptionsMeta = updateMeta(ad.DescriptionsMeta, nextDescriptions, textIndex);
+        }
+
+        nextAds[adIndex] = nextAd;
+
+        const nextAdGroups = [...campaign.AdGroups];
+        nextAdGroups[adGroupIndex] = { ...adGroup, ResponsiveSearchAds: nextAds };
+
+        return prev.map((item, idx) =>
+          idx === campaignIndex ? { ...item, AdGroups: nextAdGroups } : item,
+        );
+      });
+    },
+    [],
+  );
+
   const toggleSort = (current: SortState<string>, column: string): SortState<string> => {
     if (current.column === column) {
       return { column, direction: current.direction === "asc" ? "desc" : "asc" };
@@ -1291,11 +1357,39 @@ function CampaignVisualizerPageContent() {
                 In campaign: {selectedAdGroupData.CampaignName} • CPC:{" "}
                 {formatCpc(selectedAdGroupData.AdGroups?.[selectedAdGroup!.adGroupIdx]?.DefaultMaxCPCMYR ?? null)}
               </div>
+              {websiteUrl && (
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <Badge variant="outline">Website</Badge>
+                  <a
+                    href={websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="break-all font-medium text-slate-900 underline decoration-slate-300 underline-offset-4 hover:text-slate-700 dark:text-slate-100 dark:hover:text-slate-200"
+                  >
+                    {websiteUrl}
+                  </a>
+                  <button
+                    type="button"
+                    className={`${copyButtonClass} ${
+                      copiedName === "website-url"
+                        ? "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/30 dark:text-green-200 dark:border-green-700"
+                        : "dark:text-slate-100"
+                    }`}
+                    onClick={() => void copyName(websiteUrl, "website-url")}
+                    title="Copy website URL"
+                  >
+                    {copiedName === "website-url" ? <CheckIcon className="w-4 h-4" /> : <ClipboardIcon className="w-4 h-4" />}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
           <AdGroupTabs
             adGroup={selectedAdGroupData.AdGroups?.[selectedAdGroup!.adGroupIdx]}
             targeting={selectedAdGroupData.AdGroups?.[selectedAdGroup!.adGroupIdx]?.Targeting}
+            campaignIdx={selectedAdGroup!.campaignIdx}
+            adGroupIdx={selectedAdGroup!.adGroupIdx}
+            onUpdateAdText={updateAdText}
           />
         </div>
       ) : null}
@@ -1320,7 +1414,7 @@ function CampaignVisualizerPageContent() {
 
   return (
     <main className="min-h-screen bg-surface-muted p-6 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <div className="max-w-6xl mx-auto space-y-6">
+      <div className="max-w-7xl mx-auto space-y-6">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-2">
             <Badge variant="secondary">Step 9</Badge>
@@ -1443,6 +1537,7 @@ function CampaignVisualizerPageContent() {
                   {!projectListError && !isFetchingProjects && existingProjects.length === 0 && (
                     <div className="text-xs text-muted">No existing projects found in output/ yet.</div>
                   )}
+                  {statusMessage && <div className="text-xs text-muted">{statusMessage}</div>}
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-sm">
                   <Badge variant="secondary" className="cursor-help" title={filesTooltip}>
@@ -1453,16 +1548,20 @@ function CampaignVisualizerPageContent() {
                   </Badge>
                 </div>
               </div>
-              <div className="w-full lg:w-80 space-y-4">
-                {websiteUrl && (
-                  <div className="rounded-lg border border-default bg-surface p-3 shadow-sm">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="space-y-2">
-                        <Badge variant="outline">Website Context</Badge>
+              <div className="w-full lg:w-96">
+                <div className="rounded-lg border border-default bg-surface p-3 text-sm shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-2">
+                      <Badge variant="outline">Website Context</Badge>
+                      {websiteUrl ? (
                         <div className="break-all text-sm font-semibold text-slate-900 dark:text-slate-100">
                           {websiteUrl}
                         </div>
-                      </div>
+                      ) : (
+                        <div className="text-xs text-muted">No website loaded yet.</div>
+                      )}
+                    </div>
+                    {websiteUrl && (
                       <a
                         href={websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`}
                         target="_blank"
@@ -1471,57 +1570,64 @@ function CampaignVisualizerPageContent() {
                       >
                         Visit ↗
                       </a>
-                    </div>
+                    )}
                   </div>
-                )}
-                <div className="rounded-lg border border-default bg-surface p-3 text-sm shadow-sm">
-                  <div className="text-xs font-semibold uppercase text-muted">Initial inputs</div>
-                  {normalizedInput ? (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {[
-                        { label: "Goal", value: normalizedInput.goal },
-                        { label: "Location", value: normalizedInput.location },
-                        {
-                          label: "States",
-                          value: normalizedInput.state_list?.length ? normalizedInput.state_list.join(", ") : "",
-                        },
-                        { label: "Language", value: normalizedInput.language },
-                        {
-                          label: "Monthly ad spend",
-                          value: formatCurrency(normalizedInput.monthly_adspend_myr),
-                        },
-                      ]
-                        .filter((item) => item.value)
-                        .map((item, index) => (
-                          <Badge
-                            key={item.label}
-                            title={`${item.label}: ${item.value}`}
-                            className={cn(
-                              "border px-2.5 py-1 text-xs font-medium",
-                              [
-                                "border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-700/60 dark:bg-sky-900/30 dark:text-sky-100",
-                                "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-700/60 dark:bg-emerald-900/30 dark:text-emerald-100",
-                                "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-700/60 dark:bg-amber-900/30 dark:text-amber-100",
-                                "border-indigo-200 bg-indigo-50 text-indigo-900 dark:border-indigo-700/60 dark:bg-indigo-900/30 dark:text-indigo-100",
-                                "border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-700/60 dark:bg-rose-900/30 dark:text-rose-100",
-                              ][index % 5],
-                            )}
-                          >
-                            <span className="sr-only">{item.label}: </span>
-                            {item.value}
-                          </Badge>
-                        ))}
-                      {[
-                        normalizedInput.goal,
-                        normalizedInput.location,
-                        normalizedInput.state_list?.length ? normalizedInput.state_list.join(", ") : "",
-                        normalizedInput.language,
-                        formatCurrency(normalizedInput.monthly_adspend_myr),
-                      ].every((value) => !value) && <div className="text-muted">No initial inputs set.</div>}
-                    </div>
-                  ) : (
-                    <div className="mt-2 text-muted">Load a project to view initial inputs.</div>
-                  )}
+                  <Separator className="my-3" />
+                  <Accordion type="single" collapsible>
+                    <AccordionItem value="initial-inputs" className="border-none">
+                      <AccordionTrigger className="py-2 text-xs font-semibold uppercase text-muted">
+                        Initial inputs
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        {normalizedInput ? (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {[
+                              { label: "Goal", value: normalizedInput.goal },
+                              { label: "Location", value: normalizedInput.location },
+                              {
+                                label: "States",
+                                value: normalizedInput.state_list?.length ? normalizedInput.state_list.join(", ") : "",
+                              },
+                              { label: "Language", value: normalizedInput.language },
+                              {
+                                label: "Monthly ad spend",
+                                value: formatCurrency(normalizedInput.monthly_adspend_myr),
+                              },
+                            ]
+                              .filter((item) => item.value)
+                              .map((item, index) => (
+                                <Badge
+                                  key={item.label}
+                                  title={`${item.label}: ${item.value}`}
+                                  className={cn(
+                                    "border px-2.5 py-1 text-xs font-medium",
+                                    [
+                                      "border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-700/60 dark:bg-sky-900/30 dark:text-sky-100",
+                                      "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-700/60 dark:bg-emerald-900/30 dark:text-emerald-100",
+                                      "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-700/60 dark:bg-amber-900/30 dark:text-amber-100",
+                                      "border-indigo-200 bg-indigo-50 text-indigo-900 dark:border-indigo-700/60 dark:bg-indigo-900/30 dark:text-indigo-100",
+                                      "border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-700/60 dark:bg-rose-900/30 dark:text-rose-100",
+                                    ][index % 5],
+                                  )}
+                                >
+                                  <span className="sr-only">{item.label}: </span>
+                                  {item.value}
+                                </Badge>
+                              ))}
+                            {[
+                              normalizedInput.goal,
+                              normalizedInput.location,
+                              normalizedInput.state_list?.length ? normalizedInput.state_list.join(", ") : "",
+                              normalizedInput.language,
+                              formatCurrency(normalizedInput.monthly_adspend_myr),
+                            ].every((value) => !value) && <div className="text-muted">No initial inputs set.</div>}
+                          </div>
+                        ) : (
+                          <div className="mt-2 text-muted">Load a project to view initial inputs.</div>
+                        )}
+                      </AccordionContent>
+                    </AccordionItem>
+                  </Accordion>
                 </div>
               </div>
             </div>
@@ -2732,6 +2838,8 @@ function TableCard({
 function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; onClose: () => void }) {
   const { BiddingLifecycle, AdSchedule, NegativeKeywords } = campaign;
   const [copiedNegatives, setCopiedNegatives] = useState(false);
+  const [copiedIncludedLocations, setCopiedIncludedLocations] = useState(false);
+  const [copiedExcludedLocations, setCopiedExcludedLocations] = useState(false);
 
   const copyNegativeKeywords = async () => {
     if (!NegativeKeywords) return;
@@ -2746,6 +2854,32 @@ function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; 
       setTimeout(() => setCopiedNegatives(false), 2000);
     } catch (err) {
       console.error("Failed to copy negatives", err);
+    }
+  };
+
+  const copyIncludedLocations = async () => {
+    const included = campaign.Location?.Included ?? [];
+    if (!included.length) return;
+    const text = included.map((loc) => loc.Name).join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedIncludedLocations(true);
+      setTimeout(() => setCopiedIncludedLocations(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy included locations", err);
+    }
+  };
+
+  const copyExcludedLocations = async () => {
+    const excluded = campaign.Location?.Excluded ?? [];
+    if (!excluded.length) return;
+    const text = excluded.join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedExcludedLocations(true);
+      setTimeout(() => setCopiedExcludedLocations(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy excluded locations", err);
     }
   };
 
@@ -2802,51 +2936,6 @@ function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; 
       </div>
 
       <div className="space-y-3">
-        <div className="font-medium border-b pb-1">Location Targeting</div>
-        <div className="text-sm space-y-2">
-          <div className="flex items-center gap-2">
-            <span className="text-muted">Method:</span>
-            <span className="font-medium px-2 py-0.5 rounded bg-purple-50 text-purple-800 dark:bg-purple-900/30 dark:text-purple-200">
-              {campaign.Location?.TargetingMethod || "—"}
-            </span>
-          </div>
-          
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="border border-default rounded bg-surface-muted p-2">
-              <div className="text-xs font-semibold text-muted mb-2">Included ({campaign.Location?.Included?.length ?? 0})</div>
-              {campaign.Location?.Included?.length ? (
-                <ul className="list-disc list-inside space-y-1 text-muted">
-                  {campaign.Location.Included.map((loc, i) => (
-                    <li key={i}>
-                      {loc.Name}
-                      {typeof loc.RadiusKm === "number" && (
-                        <span className="text-muted ml-1">({loc.RadiusKm} km)</span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="text-muted italic">None</div>
-              )}
-            </div>
-            
-            <div className="border rounded bg-red-50 p-2 dark:bg-red-900/10 dark:border-red-900/30">
-              <div className="text-xs font-semibold text-red-700 mb-2 dark:text-red-300">Excluded ({campaign.Location?.Excluded?.length ?? 0})</div>
-              {campaign.Location?.Excluded?.length ? (
-                <ul className="list-disc list-inside space-y-1 text-red-800 dark:text-red-200">
-                  {campaign.Location.Excluded.map((loc, i) => (
-                    <li key={i}>{loc}</li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="text-red-400 italic">None</div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="space-y-3">
         <div className="font-medium border-b pb-1">Bidding Strategy</div>
         {BiddingLifecycle ? (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
@@ -2888,6 +2977,81 @@ function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; 
         ) : (
           <div className="text-sm text-muted">No bidding lifecycle data.</div>
         )}
+      </div>
+
+      <div className="space-y-3">
+        <div className="font-medium border-b pb-1">Location Targeting</div>
+        <div className="text-sm space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-muted">Method:</span>
+            <span className="font-medium px-2 py-0.5 rounded bg-purple-50 text-purple-800 dark:bg-purple-900/30 dark:text-purple-200">
+              {campaign.Location?.TargetingMethod || "—"}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="border border-default rounded bg-surface-muted p-2">
+              <div className="flex items-center justify-between text-xs font-semibold text-muted mb-2">
+                <span>Included ({campaign.Location?.Included?.length ?? 0})</span>
+                {campaign.Location?.Included?.length ? (
+                  <button
+                    onClick={() => void copyIncludedLocations()}
+                    className="text-[11px] px-2 py-0.5 border border-default rounded transition hover:bg-slate-200 hover:shadow-sm hover:-translate-y-0.5 dark:hover:bg-slate-700 flex items-center gap-1"
+                  >
+                    {copiedIncludedLocations ? (
+                      <CheckIcon className="w-3 h-3 text-green-600" />
+                    ) : (
+                      <ClipboardIcon className="w-3 h-3" />
+                    )}
+                    {copiedIncludedLocations ? "Copied" : "Copy"}
+                  </button>
+                ) : null}
+              </div>
+              {campaign.Location?.Included?.length ? (
+                <ul className="list-disc list-inside space-y-1 text-muted">
+                  {campaign.Location.Included.map((loc, i) => (
+                    <li key={i}>
+                      {loc.Name}
+                      {typeof loc.RadiusKm === "number" && (
+                        <span className="text-muted ml-1">({loc.RadiusKm} km)</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-muted italic">None</div>
+              )}
+            </div>
+
+            <div className="border rounded bg-red-50 p-2 dark:bg-red-900/10 dark:border-red-900/30">
+              <div className="flex items-center justify-between text-xs font-semibold text-red-700 mb-2 dark:text-red-300">
+                <span>Excluded ({campaign.Location?.Excluded?.length ?? 0})</span>
+                {campaign.Location?.Excluded?.length ? (
+                  <button
+                    onClick={() => void copyExcludedLocations()}
+                    className="text-[11px] px-2 py-0.5 border border-default rounded transition hover:bg-slate-200 hover:shadow-sm hover:-translate-y-0.5 dark:hover:bg-slate-700 flex items-center gap-1 text-red-700 dark:text-red-200"
+                  >
+                    {copiedExcludedLocations ? (
+                      <CheckIcon className="w-3 h-3 text-green-600" />
+                    ) : (
+                      <ClipboardIcon className="w-3 h-3" />
+                    )}
+                    {copiedExcludedLocations ? "Copied" : "Copy"}
+                  </button>
+                ) : null}
+              </div>
+              {campaign.Location?.Excluded?.length ? (
+                <ul className="list-disc list-inside space-y-1 text-red-800 dark:text-red-200">
+                  {campaign.Location.Excluded.map((loc, i) => (
+                    <li key={i}>{loc}</li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-red-400 italic">None</div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="space-y-3">
@@ -2985,13 +3149,32 @@ function CampaignSettingsPanel({ campaign, onClose }: { campaign: CampaignPlan; 
 function AdGroupTabs({
   adGroup,
   targeting,
+  campaignIdx,
+  adGroupIdx,
+  onUpdateAdText,
 }: {
   adGroup?: CampaignPlanAdGroup;
   targeting?: CampaignPlanAdGroup["Targeting"];
+  campaignIdx: number;
+  adGroupIdx: number;
+  onUpdateAdText: (
+    campaignIndex: number,
+    adGroupIndex: number,
+    adIndex: number,
+    type: "headline" | "description",
+    textIndex: number,
+    nextText: string,
+  ) => void;
 }) {
-  const [tab, setTab] = useState<"ads" | "keywords">("ads");
+  const [tab, setTab] = useState<"ads" | "keywords">("keywords");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [keywordText, setKeywordText] = useState("");
+  const [editingText, setEditingText] = useState<{
+    adIndex: number;
+    type: "headline" | "description";
+    textIndex: number;
+  } | null>(null);
+  const [draftText, setDraftText] = useState("");
 
   const markCopied = (key: string) => {
     setCopiedKey(key);
@@ -3064,19 +3247,37 @@ function AdGroupTabs({
     return text.length;
   };
 
+  const getLimit = (type: "headline" | "description") => (type === "headline" ? 30 : 90);
+
+  const beginEdit = (text: string, info: { adIndex: number; type: "headline" | "description"; textIndex: number }) => {
+    setEditingText(info);
+    setDraftText(text);
+  };
+
+  const cancelEdit = () => {
+    setEditingText(null);
+    setDraftText("");
+  };
+
+  const saveEdit = () => {
+    if (!editingText) return;
+    const limit = getLimit(editingText.type);
+    if (draftText.length > limit) return;
+    onUpdateAdText(
+      campaignIdx,
+      adGroupIdx,
+      editingText.adIndex,
+      editingText.type,
+      editingText.textIndex,
+      draftText,
+    );
+    setEditingText(null);
+    setDraftText("");
+  };
+
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2 text-sm">
-        <button
-          className={`px-3 py-1 rounded border border-default transition ${
-            tab === "ads"
-              ? "bg-blue-600 text-white hover:bg-blue-700 hover:border-blue-600 dark:hover:bg-blue-500"
-              : "bg-surface text-body hover:border-blue-400 hover:bg-blue-200/70 hover:text-blue-900 dark:hover:border-blue-400 dark:hover:bg-blue-800/40"
-          }`}
-          onClick={() => setTab("ads")}
-        >
-          Ads ({ads.length})
-        </button>
         <button
           className={`px-3 py-1 rounded border border-default transition ${
             tab === "keywords"
@@ -3087,97 +3288,17 @@ function AdGroupTabs({
         >
           Keywords ({keywords.length})
         </button>
+        <button
+          className={`px-3 py-1 rounded border border-default transition ${
+            tab === "ads"
+              ? "bg-blue-600 text-white hover:bg-blue-700 hover:border-blue-600 dark:hover:bg-blue-500"
+              : "bg-surface text-body hover:border-blue-400 hover:bg-blue-200/70 hover:text-blue-900 dark:hover:border-blue-400 dark:hover:bg-blue-800/40"
+          }`}
+          onClick={() => setTab("ads")}
+        >
+          Ad Copy ({ads.length})
+        </button>
       </div>
-
-      {tab === "ads" && (
-        <div className="space-y-3">
-          {ads.map((ad, idx) => (
-            <div key={idx} className="border border-default rounded p-4 bg-surface space-y-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="font-medium text-sm">Responsive Search Ad {idx + 1}</div>
-                <button
-                  type="button"
-                  className={`${copyButtonClass} ${
-                    copiedKey === `ad-${idx}`
-                      ? "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/30 dark:text-green-200 dark:border-green-700"
-                      : ""
-                  }`}
-                  onClick={() => void copyAd(ad, idx)}
-                  title="Copy headlines and descriptions"
-                >
-                  {copiedKey === `ad-${idx}` ? <CheckIcon className="w-4 h-4" /> : <ClipboardIcon className="w-4 h-4" />}
-                  <span>{copiedKey === `ad-${idx}` ? "Copied" : "Copy"}</span>
-                </button>
-              </div>
-              <div className="space-y-3">
-                <div>
-                  <div className="text-xs text-muted mb-2 uppercase tracking-wide">Headlines</div>
-                  <ol className="list-decimal list-inside text-sm space-y-2">
-                  {ad.Headlines.map((headline, hIdx) => {
-                    const charCount = getCharCount(headline, ad.HeadlinesMeta, hIdx);
-                    return (
-                      <li key={hIdx} className="flex items-start gap-2 py-1">
-                        <span className="flex-1">{headline}</span>
-                        <span className="text-xs text-muted tabular-nums whitespace-nowrap">{charCount} chars</span>
-                        <button
-                          type="button"
-                          className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-blue-700 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100 transition hover:bg-slate-300 dark:hover:bg-slate-700 ${
-                            copiedKey === `headline-${idx}-${hIdx}` ? "text-green-700 dark:text-green-300" : ""
-                          }`}
-                          title="Copy headline"
-                          onClick={() => {
-                            void copyText(headline);
-                            markCopied(`headline-${idx}-${hIdx}`);
-                          }}
-                        >
-                          {copiedKey === `headline-${idx}-${hIdx}` ? (
-                            <CheckIcon className="w-4 h-4" />
-                          ) : (
-                            <ClipboardIcon className="w-4 h-4" />
-                          )}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ol>
-              </div>
-                <div>
-                  <div className="text-xs text-muted mb-2 uppercase tracking-wide">Descriptions</div>
-                  <ol className="list-decimal list-inside text-sm space-y-2">
-                  {ad.Descriptions.map((desc, dIdx) => {
-                    const charCount = getCharCount(desc, ad.DescriptionsMeta, dIdx);
-                    return (
-                      <li key={dIdx} className="flex items-start gap-2 py-1">
-                        <span className="flex-1">{desc}</span>
-                        <span className="text-xs text-muted tabular-nums whitespace-nowrap">{charCount} chars</span>
-                        <button
-                          type="button"
-                          className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-blue-700 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100 transition hover:bg-slate-300 dark:hover:bg-slate-700 ${
-                            copiedKey === `desc-${idx}-${dIdx}` ? "text-green-700 dark:text-green-300" : ""
-                          }`}
-                          title="Copy description"
-                          onClick={() => {
-                            void copyText(desc);
-                            markCopied(`desc-${idx}-${dIdx}`);
-                          }}
-                        >
-                          {copiedKey === `desc-${idx}-${dIdx}` ? (
-                            <CheckIcon className="w-4 h-4" />
-                          ) : (
-                            <ClipboardIcon className="w-4 h-4" />
-                          )}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ol>
-              </div>
-              </div>
-            </div>
-          ))}
-          {ads.length === 0 && <div className="text-sm text-muted">No ads in this ad group.</div>}
-        </div>
-      )}
 
       {tab === "keywords" && (
         <div className="overflow-x-auto">
@@ -3208,20 +3329,20 @@ function AdGroupTabs({
                 <tr>
                   <td className="px-2 py-1 text-sm text-muted" colSpan={5}>
                     No keywords available.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+            <tfoot>
+              <tr className="bg-blue-50 font-medium dark:bg-blue-900/30 dark:text-blue-100">
+                <td className="px-2 py-2 text-right" colSpan={2}>
+                  Averages
                 </td>
+                <td className="px-2 py-2">{formatNumber(keywordAverages.avgMonthlySearches ?? null)}</td>
+                <td className="px-2 py-2">{formatCpc(keywordAverages.avgCpc ?? null)}</td>
+                <td className="px-2 py-2">{formatDecimal(keywordAverages.avgCompetition ?? null)}</td>
               </tr>
-            )}
-          </tbody>
-          <tfoot>
-            <tr className="bg-blue-50 font-medium dark:bg-blue-900/30 dark:text-blue-100">
-              <td className="px-2 py-2 text-right" colSpan={2}>
-                Averages
-              </td>
-              <td className="px-2 py-2">{formatNumber(keywordAverages.avgMonthlySearches ?? null)}</td>
-              <td className="px-2 py-2">{formatCpc(keywordAverages.avgCpc ?? null)}</td>
-              <td className="px-2 py-2">{formatDecimal(keywordAverages.avgCompetition ?? null)}</td>
-            </tr>
-          </tfoot>
+            </tfoot>
           </table>
           <div className="mt-3 space-y-2">
             <div className="flex items-center justify-between text-xs text-muted">
@@ -3249,6 +3370,228 @@ function AdGroupTabs({
               onChange={(e) => setKeywordText(e.target.value)}
             />
           </div>
+        </div>
+      )}
+
+      {tab === "ads" && (
+        <div className="space-y-3">
+          {ads.map((ad, idx) => (
+            <div key={idx} className="border border-default rounded p-4 bg-surface space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="font-medium text-sm">Responsive Search Ad {idx + 1}</div>
+                <button
+                  type="button"
+                  className={`${copyButtonClass} ${
+                    copiedKey === `ad-${idx}`
+                      ? "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/30 dark:text-green-200 dark:border-green-700"
+                      : ""
+                  }`}
+                  onClick={() => void copyAd(ad, idx)}
+                  title="Copy headlines and descriptions"
+                >
+                  {copiedKey === `ad-${idx}` ? <CheckIcon className="w-4 h-4" /> : <ClipboardIcon className="w-4 h-4" />}
+                  <span>{copiedKey === `ad-${idx}` ? "Copied" : "Copy"}</span>
+                </button>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <div className="text-xs text-muted mb-2 uppercase tracking-wide">Headlines</div>
+                  <ol className="text-sm space-y-2">
+                  {ad.Headlines.map((headline, hIdx) => {
+                    const charCount = getCharCount(headline, ad.HeadlinesMeta, hIdx);
+                    const isEditing =
+                      editingText?.adIndex === idx &&
+                      editingText?.type === "headline" &&
+                      editingText?.textIndex === hIdx;
+                    const limit = getLimit("headline");
+                    const withinLimit = draftText.length <= limit;
+                    return (
+                      <li key={hIdx} className="space-y-2">
+                        <div className="grid grid-cols-[2rem_1fr_auto] items-center gap-2 py-1 min-h-[40px]">
+                          <span className="text-sm text-muted tabular-nums text-right select-none">{hIdx + 1}.</span>
+                          <span
+                            className="text-sm leading-snug select-text"
+                            style={{
+                              display: "-webkit-box",
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: "vertical",
+                              overflow: "hidden",
+                            }}
+                            title={headline}
+                          >
+                            {headline}
+                          </span>
+                          <div className="flex items-center gap-2 select-none">
+                            <span className="text-xs text-muted tabular-nums whitespace-nowrap select-none">{charCount} chars</span>
+                            <button
+                              type="button"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-full text-blue-700 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100 transition hover:bg-slate-300 dark:hover:bg-slate-700 select-none"
+                              title="Edit headline"
+                              onClick={() => beginEdit(headline, { adIndex: idx, type: "headline", textIndex: hIdx })}
+                            >
+                              <PencilIcon className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-blue-700 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100 transition hover:bg-slate-300 dark:hover:bg-slate-700 select-none ${
+                                copiedKey === `headline-${idx}-${hIdx}` ? "text-green-700 dark:text-green-300" : ""
+                              }`}
+                              title="Copy headline"
+                              onClick={() => {
+                                void copyText(headline);
+                                markCopied(`headline-${idx}-${hIdx}`);
+                              }}
+                            >
+                              {copiedKey === `headline-${idx}-${hIdx}` ? (
+                                <CheckIcon className="w-4 h-4" />
+                              ) : (
+                                <ClipboardIcon className="w-4 h-4" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                        {isEditing && (
+                          <div className="rounded border border-default bg-surface-muted p-2 space-y-2">
+                            <Textarea
+                              className="text-sm"
+                              rows={2}
+                              value={draftText}
+                              onChange={(e) => setDraftText(e.target.value)}
+                            />
+                            <div className="flex items-center justify-between text-xs">
+                              <span className={withinLimit ? "text-muted" : "text-red-600"}>
+                                {draftText.length}/{limit} characters
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  className="px-2 py-1 border border-default rounded text-xs hover:bg-slate-200 dark:hover:bg-slate-700"
+                                  onClick={cancelEdit}
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`px-2 py-1 border border-default rounded text-xs transition ${
+                                    withinLimit
+                                      ? "bg-blue-600 text-white hover:bg-blue-700 hover:border-blue-600"
+                                      : "opacity-50 cursor-not-allowed text-muted"
+                                  }`}
+                                  onClick={saveEdit}
+                                  disabled={!withinLimit}
+                                >
+                                  Save
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                  </ol>
+              </div>
+                <div>
+                  <div className="text-xs text-muted mb-2 uppercase tracking-wide">Descriptions</div>
+                  <ol className="text-sm space-y-2">
+                  {ad.Descriptions.map((desc, dIdx) => {
+                    const charCount = getCharCount(desc, ad.DescriptionsMeta, dIdx);
+                    const isEditing =
+                      editingText?.adIndex === idx &&
+                      editingText?.type === "description" &&
+                      editingText?.textIndex === dIdx;
+                    const limit = getLimit("description");
+                    const withinLimit = draftText.length <= limit;
+                    return (
+                      <li key={dIdx} className="space-y-2">
+                        <div className="grid grid-cols-[2rem_1fr_auto] items-center gap-2 py-1 min-h-[52px]">
+                          <span className="text-sm text-muted tabular-nums text-right select-none">{dIdx + 1}.</span>
+                          <span
+                            className="text-sm leading-snug select-text"
+                            style={{
+                              display: "-webkit-box",
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: "vertical",
+                              overflow: "hidden",
+                            }}
+                            title={desc}
+                          >
+                            {desc}
+                          </span>
+                          <div className="flex items-center gap-2 select-none">
+                            <span className="text-xs text-muted tabular-nums whitespace-nowrap select-none">{charCount} chars</span>
+                            <button
+                              type="button"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-full text-blue-700 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100 transition hover:bg-slate-300 dark:hover:bg-slate-700 select-none"
+                              title="Edit description"
+                              onClick={() => beginEdit(desc, { adIndex: idx, type: "description", textIndex: dIdx })}
+                            >
+                              <PencilIcon className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-blue-700 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100 transition hover:bg-slate-300 dark:hover:bg-slate-700 select-none ${
+                                copiedKey === `desc-${idx}-${dIdx}` ? "text-green-700 dark:text-green-300" : ""
+                              }`}
+                              title="Copy description"
+                              onClick={() => {
+                                void copyText(desc);
+                                markCopied(`desc-${idx}-${dIdx}`);
+                              }}
+                            >
+                              {copiedKey === `desc-${idx}-${dIdx}` ? (
+                                <CheckIcon className="w-4 h-4" />
+                              ) : (
+                                <ClipboardIcon className="w-4 h-4" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                        {isEditing && (
+                          <div className="rounded border border-default bg-surface-muted p-2 space-y-2">
+                            <Textarea
+                              className="text-sm"
+                              rows={3}
+                              value={draftText}
+                              onChange={(e) => setDraftText(e.target.value)}
+                            />
+                            <div className="flex items-center justify-between text-xs">
+                              <span className={withinLimit ? "text-muted" : "text-red-600"}>
+                                {draftText.length}/{limit} characters
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  className="px-2 py-1 border border-default rounded text-xs hover:bg-slate-200 dark:hover:bg-slate-700"
+                                  onClick={cancelEdit}
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`px-2 py-1 border border-default rounded text-xs transition ${
+                                    withinLimit
+                                      ? "bg-blue-600 text-white hover:bg-blue-700 hover:border-blue-600"
+                                      : "opacity-50 cursor-not-allowed text-muted"
+                                  }`}
+                                  onClick={saveEdit}
+                                  disabled={!withinLimit}
+                                >
+                                  Save
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                  </ol>
+              </div>
+              </div>
+            </div>
+          ))}
+          {ads.length === 0 && <div className="text-sm text-muted">No ads in this ad group.</div>}
         </div>
       )}
     </div>
@@ -3294,6 +3637,24 @@ function CheckIcon({ className }: { className?: string }) {
       className={className}
     >
       <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+function PencilIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
     </svg>
   );
 }

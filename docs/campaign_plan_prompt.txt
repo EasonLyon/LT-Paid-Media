@@ -71,11 +71,13 @@ You must output a single JSON object strictly adhering to the provided schema. F
 
 1.  **Campaigns Array**:
     *   Limit to 1-3 highly relevant campaigns to consolidate budget.
-    *   **CampaignName**: STRICT FORMAT: `LT-A | [Index] | [YYYYMM] | [Goal] | [Type] | [Geo] | [Language] | [Category]`.
+    *   **CampaignId**: SHORT FORMAT: `C[NN]` (e.g., `C01`, `C02`). This is a stable ID used to link Ad Groups to their parent campaign.
+    *   **CampaignName**: STRICT FORMAT: `LT-A | [Index] | [YYYYMM] | [Goal] | [Type] | [Geo] | [Language] | [Brand + Product/Offer] | [Category]`.
         *   *Index*: 2-digit sequential number (e.g., `01`, `02`).
         *   *Goal*: Shortened goal name (e.g., `Lead`, `Sales`).
         *   *Geo*: ISO Code (e.g., `MY`, `SG`).
         *   *Language*: Primary ISO Code (e.g., `EN` or `EN-MS`).
+        *   *Brand + Product/Offer*: Brand name plus the specific product/service/offer (e.g., `Acme Invisalign`).
         *   *Category*: High-level vertical (e.g., `Furniture`, `Dental`).
     *   **Language**:
         *   **Logic**: Determine the languages array based on Brand Positioning.
@@ -90,9 +92,15 @@ You must output a single JSON object strictly adhering to the provided schema. F
                 *   Use `PresenceOrInterest` ONLY for Tourism, Real Estate, or Nationwide E-commerce shipping.
 
 2.  **BiddingLifecycle**:
-    *   `Phase1_Launch`: Always set `StrategyType` to `MaximizeClicks`. **Context:** Calculate `MaxCPC_Cap_MYR` as **Daily Budget / 15** (aiming for ~15 clicks/day). **Constraints:** Never set below **2.00 MYR** (floor) and rarely above **12.00 MYR** (ceiling), unless the industry is extremely competitive (e.g., Legal/Finance).
+    *   `Phase1_Launch`: Always set `StrategyType` to `MaximizeClicks`.
+        *   **Cap Logic (Get Traffic Faster):**
+            *   Base cap = **Daily Budget / 10** (aiming for ~10 clicks/day).
+            *   If keyword CPC data exists, set `MaxCPC_Cap_MYR` to **max(Base cap, median CPC * 1.2)**.
+            *   **Constraints:** Never set below **3.00 MYR** (floor) and rarely above **18.00 MYR** (ceiling), unless the industry is extremely competitive (e.g., Legal/Finance) where **25.00 MYR** is acceptable.
     *   `Switch_Condition`: Default `Threshold` to `15` conversions.
     *   `Phase2_Scale`: Choose `TargetCPA` (efficiency) or `MaximizeConversions` (volume) based on the User's Goal.
+        *   **tCPA Logic (Enable Learning):**
+            *   Estimate `TargetCPA_MYR` using **Estimated CPC / 0.02** (assume 2% CVR), then apply a **+20–30% buffer**.
 
 3.  **AdSchedule**:
     *   **Context-Aware:** Customize based on the `Business Context`. Do not default to 24/7 unless it's an always-on e-commerce or emergency service.
@@ -106,6 +114,8 @@ You must output a single JSON object strictly adhering to the provided schema. F
         *   Apply `-20` to `-50` for low-intent hours (e.g., post-midnight) instead of turning off completely if traffic is cheap.
 
 4.  **AdGroups**:
+    *   **ParentCampaignId**: Must match the CampaignId of the parent campaign (e.g., `C01`).
+    *   **AdGroupId**: SHORT FORMAT: `C[NN]-AG[NN]` (e.g., `C01-AG01`, `C01-AG02`). This makes campaign-to-ad group linkage obvious at a glance.
     *   **AdGroupName**: STRICT FORMAT: `[SubCategory] | [Intent - High/Mid/Low] { | Phase 2 }`.
         *   *Note:* Append `| Phase 2` only for ad groups intended for future scaling (e.g., Broad Match or Low Intent).
     *   **Geo-Segmentation**: If the `Business Context` lists distinct cities with sufficient search volume (e.g., KL vs Petaling Jaya), create separate Ad Groups for them to ensure Headline relevance.
@@ -116,13 +126,18 @@ You must output a single JSON object strictly adhering to the provided schema. F
         *   **Selection Logic**: Look for the "sweet spot" of high relevance + decent search volume.
         *   **Match Types**: Use `Phrase` and `Exact` match for standard groups. Use `Broad` match **only** if the `AdGroupName` includes the `| Phase 2` tag.
         *   **Anti-Cannibalization**: Do not repeat the exact same keyword across multiple active groups. If a specific intent (e.g., "Fees") has its own Ad Group, ensure those terms are added as **Negative Keywords** in the Generic Ad Groups.
+        *   **Keyword Formatting & Policy**:
+            *   Do not use non-standard characters like `!`, `@`, `%`, `,`, `*`.
+            *   Avoid improper capitalization (no ALL CAPS like "FREE", "BEST", "STRAWBERRY").
+            *   Health condition-related services, procedures, or products are not allowed in personalized advertising.
 
 5.  **ResponsiveSearchAds**:
     * **Copywriting Best Practices**:
         * **Title Case**: Capitalize the first letter of each major word (e.g., "Best [Service] In [Location]").
+        * **Capitalization Policy**: Avoid improper capitalization (no ALL CAPS like "FREE", "BEST", "STRAWBERRY").
         * **User-Centric**: Focus on the user's needs ("Get Your Quote," "Improve Your Skills") rather than just the brand.
         * **Specificity**: Avoid generic fluff (e.g., "Best Services"). Use concrete details (e.g., "Award-Winning [Feature]", "24/7 Support").
-    * **Headlines**: Provide 5-10 distinct headlines.
+    * **Headlines**: Provide 5-10 distinct headlines (Max 30 chars).
         * *Asset Mix:* Ensure the output covers the strategy defined in the Knowledge Base (Keywords, Benefits, Social Proof, and CTAs).
     * **Descriptions**: Provide 2-4 descriptions (Max 90 chars).
         * *Structure:* Ensure distinct angles—one focusing on the **Value Proposition/Solution**, and another focusing on a strong **Call to Action**.
@@ -148,27 +163,40 @@ This acts as a simple, high-impact manual for a non-expert user to manage the ac
 * **Context**: All decisions must be based on **"Last 30 Days"** data unless specified otherwise.
 
 ### 3. Required Scenarios to Cover
-Generate recommendations based on these 5 logic gates:
+Generate recommendations based on these logic gates:
 
-1.  **The "Search Term Hygiene" Rule (Negative Keywords)**
-    * *Goal:* Prevent wasted spend.
-    * *Trigger:* Search terms with > 50 impressions and < 1% CTR, or clearly irrelevant intent.
-    * *Action:* Add as Negative Keyword.
+1. **The "Search Term Hygiene" Rule (Negative Keywords)**
+   * *Goal:* Prevent wasted spend.
+   * *Trigger A (Irrelevant Intent):* Search terms are clearly irrelevant OR contain job/info intent (e.g., “free”, “pdf”, “salary”, “resume”, “definition”, “how to”).
+   * *Action A:* Add as Negative Keyword immediately.
+   * *Trigger B (Relevant But Weak):* Search term is relevant AND has **> 100 impressions** AND **CTR < 1%** (Last 30 Days).
+   * *Action B:* Do **not** negative yet. First improve RSA message match (add the search theme into 2–3 headlines). Re-check next week.
 
-2.  **The "Stop Loss" Rule (Pausing Bleeders)**
-    * *Trigger:* Keyword spends > 1.5x Target CPL with 0 conversions **AND** has at least 10 clicks.
-    * *Action:* Pause the keyword.
+2. **The "Stop Loss" Rule (Pausing Bleeders)**
+   * *Trigger:* In **Last 30 Days**, keyword has **≥ 10 clicks** AND **0 conversions** AND spend **> 1.5x Target_CPL_MYR**.
+   * *Action:* Pause the keyword **OR** tighten match type (e.g., Phrase → Exact) if intent is good but too broad.
 
-3.  **The "Winner's Circle" Rule (Scaling Up)**
-    * *Trigger:* CPA is < Target CPL **AND** Search Lost IS (Budget) > 10%.
-    * *Action:* Increase daily budget by 10-20%.
+3. **The "Winner's Circle" Rule (Scaling Up)**
+   * *Trigger:* Campaign CPA is **< Target_CPL_MYR** AND **Search Lost IS (Budget) > 10%** AND **conversions ≥ 5** (Last 30 Days).
+   * *Action:* Increase daily budget by **10%**. If Lost IS (Budget) is still > 10% next week, increase another **10%**.
 
-4.  **The "Ad Copy Refresh" Rule (CTR & Quality Score)**
-    * *Trigger:* Ad CTR < 2% (Search) OR Ad Relevance is "Below Average."
-    * *Action:* Rewrite headlines to include the main keyword.
+4. **The "Ad Copy Refresh" Rule (CTR & Ad Relevance)**
+   * *Trigger:* In **Last 30 Days**, Ad/Ad Group **CTR < 2%** OR **Ad Relevance = Below Average**.
+   * *Action:* Refresh RSAs using these steps:
+     * Add the main keyword theme into **2–3 headlines** (not all).
+     * Add **location** into **1 headline** (if local service).
+     * Add **1 strong CTA** headline (e.g., “Book A Call”, “Get Quote”, “Check Availability”).
+     * Replace the weakest **2 headlines**; keep strong performers.
 
-5.  **The "Quality Score Boost" Rule (Long-Term Health)**
-    * *Trigger:* Quality Score < 5/10 for keywords spending > 20% of budget.
-    * *Action:* Improve Landing Page speed or ensure keyword appears in H1 tag.
+5. **The "Quality Score Boost" Rule (Long-Term Health)**
+   * *Trigger:* In **Last 30 Days**, **Quality Score < 5/10** AND the keyword is in the **top 20% of total spend**.
+   * *Action:* Fix in this order:
+     1) Ensure the keyword theme appears in the **H1 or first screen** of the landing page.
+     2) Improve landing page speed (especially mobile): reduce heavy images/scripts.
+     3) If the weak component is **Expected CTR**, prioritize RSA improvements and tighter match types.
+
+6. **The "CPC Spike Guard" Rule (Launch Protection - Phase 1)**
+   * *Trigger:* In the **Last 7 Days**, Avg CPC is consistently **above MaxCPC_Cap_MYR** OR spend increases sharply with no conversion lift.
+   * *Action:* Reduce MaxCPC cap by **10–15%** OR tighten targeting (remove Broad/loose terms, move to Exact/Phrase, or tighten location to Presence).
 
 **Output the JSON now:**

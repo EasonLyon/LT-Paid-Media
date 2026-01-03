@@ -170,7 +170,8 @@ function useLogs() {
     const timestamp = new Date().toLocaleTimeString();
     setLogs((prev) => [`[${timestamp}] ${message}`, ...prev]);
   }, []);
-  return { logs, push };
+  const clear = useCallback(() => setLogs([]), []);
+  return { logs, push, clear };
 }
 
 interface CollapsibleSectionProps {
@@ -319,7 +320,7 @@ export default function SemPage() {
   const [fileViewerMessage, setFileViewerMessage] = useState<string | null>(null);
   const [progress, setProgress] = useState<number>(0);
   const [step1Elapsed, setStep1Elapsed] = useState<number>(0);
-  const { logs, push } = useLogs();
+  const { logs, push, clear } = useLogs();
   const [stepStatuses, setStepStatuses] = useState<Record<StepKey, StepStatus>>(buildInitialStepStatuses);
 
   const [startForm, setStartForm] = useState<StartFormState>({ ...DEFAULT_START_FORM });
@@ -576,13 +577,6 @@ export default function SemPage() {
     return () => clearInterval(interval);
   }, [isGeneratingPlan]);
 
-  useEffect(() => {
-    return () => {
-      stopStep1Timer();
-      stopStep8Timer();
-    };
-  }, []);
-
   // Effect to auto-load landing page plan if exists
   useEffect(() => {
     const planFile = "12_2-landing-page-plan.txt";
@@ -735,6 +729,11 @@ export default function SemPage() {
     } finally {
       setIsGeneratingProjectId(false);
     }
+  };
+
+  const handleNewProject = async () => {
+    resetRunPanels();
+    await generateNewProjectId();
   };
 
   const openFile = async (filename: string) => {
@@ -1102,6 +1101,7 @@ export default function SemPage() {
       push("Provide projectId first");
       return;
     }
+    resetRunPanels({ clearLogs: false });
     setIsBusy(true);
     const sequence: Array<{
       key: StepKey;
@@ -1154,11 +1154,9 @@ export default function SemPage() {
       {
         key: "visualizer",
         label: "Step 9 – Visualize & QA",
-        run: async () => {
-          openVisualizerTab();
-          return true;
-        },
-        isComplete: () => false,
+        run: (options) => runStep9Visualization(options),
+        isComplete: () =>
+          availableFiles.some((file) => file.startsWith("11-") && file.endsWith(".json")),
       },
     ];
 
@@ -1232,12 +1230,12 @@ export default function SemPage() {
     }, 1000);
   };
 
-  const stopStep1Timer = () => {
+  const stopStep1Timer = useCallback(() => {
     if (step1TimerRef.current) {
       window.clearInterval(step1TimerRef.current);
       step1TimerRef.current = null;
     }
-  };
+  }, []);
 
   const startStep8Timer = () => {
     stopStep8Timer();
@@ -1248,12 +1246,12 @@ export default function SemPage() {
     }, 1000);
   };
 
-  const stopStep8Timer = () => {
+  const stopStep8Timer = useCallback(() => {
     if (step8TimerRef.current) {
       window.clearInterval(step8TimerRef.current);
       step8TimerRef.current = null;
     }
-  };
+  }, []);
 
   const formatElapsed = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -1278,7 +1276,7 @@ export default function SemPage() {
     (window as unknown as { __semProgressInterval?: number }).__semProgressInterval = id;
   };
 
-  const stopProgress = (complete: boolean) => {
+  const stopProgress = useCallback((complete: boolean) => {
     const typedWindow = window as unknown as { __semProgressInterval?: number };
     if (typedWindow.__semProgressInterval) {
       window.clearInterval(typedWindow.__semProgressInterval);
@@ -1288,7 +1286,15 @@ export default function SemPage() {
     if (complete) {
       setTimeout(() => setProgress(0), 800);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopStep1Timer();
+      stopStep8Timer();
+    };
+  }, [stopStep1Timer, stopStep8Timer]);
+
 
   // Step 2 polling with adaptive interval
   const MIN_PROGRESS_POLL_INTERVAL_MS = 1000;
@@ -1366,6 +1372,23 @@ export default function SemPage() {
       pollTimer.current = null;
     }
   }, []);
+
+  const resetRunPanels = useCallback(
+    (options?: { clearLogs?: boolean }) => {
+      cancelStepProgressPoll();
+      stopProgress(false);
+      stopStep1Timer();
+      stopStep8Timer();
+      setProgress(0);
+      setStep1Elapsed(0);
+      setStep8Elapsed(0);
+      setStepStatuses(buildInitialStepStatuses());
+      if (options?.clearLogs ?? true) {
+        clear();
+      }
+    },
+    [cancelStepProgressPoll, clear, stopProgress, stopStep1Timer, stopStep8Timer],
+  );
 
   useEffect(() => {
     cancelStepProgressPoll();
@@ -1961,8 +1984,9 @@ export default function SemPage() {
     return trimmed;
   };
 
-  const handleRedoVisualization = async () => {
-    if (!projectId) return;
+  const runStep9Visualization = async (options?: { manageBusy?: boolean }) => {
+    const manageBusy = options?.manageBusy ?? true;
+    if (!projectId) return false;
     const hasEnrichedPlan = availableFiles.some((file) => file.startsWith("11-") && file.endsWith(".json"));
     if (hasEnrichedPlan) {
       const confirmReset = await askConfirm(
@@ -1971,12 +1995,13 @@ export default function SemPage() {
         "Delete & Re-run",
         "Cancel",
       );
-      if (!confirmReset) return;
+      if (!confirmReset) return false;
     }
 
-    setIsBusy(true);
+    if (manageBusy) setIsBusy(true);
     updateStepStatus("visualizer", { status: "running", message: "Step 9 running…" });
     push(`${step9LogPrefix} Starting enrichment`);
+    let completed = false;
     try {
       const res = await fetch("/api/sem/campaign-visualizer", {
         method: "POST",
@@ -2010,13 +2035,19 @@ export default function SemPage() {
       push(`${step9LogPrefix} Completed at ${formatted}`);
       // Completion timestamp is shown in the Step 9 panel.
       openVisualizerTab();
+      completed = true;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Step 9 failed";
       push(`${step9LogPrefix} Failed: ${message}`);
       updateStepStatus("visualizer", { status: "error", message });
     } finally {
-      setIsBusy(false);
+      if (manageBusy) setIsBusy(false);
     }
+    return completed;
+  };
+
+  const handleRedoVisualization = async () => {
+    await runStep9Visualization();
   };
 
   const filteredFiles = availableFiles
@@ -2075,7 +2106,7 @@ export default function SemPage() {
                   <button
                     type="button"
                     className={secondaryButtonSm}
-                    onClick={() => void generateNewProjectId()}
+                    onClick={() => void handleNewProject()}
                     disabled={isGeneratingProjectId}
                   >
                     {isGeneratingProjectId ? "Generating..." : "New project"}

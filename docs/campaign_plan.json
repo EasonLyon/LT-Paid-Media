@@ -12,9 +12,14 @@
         "items": {
           "type": "object",
           "properties": {
+            "CampaignId": {
+              "type": "string",
+              "description": "Short campaign ID used to link ad groups. Format: 'C[NN]' (e.g. 'C01').",
+              "pattern": "^C\\d{2}$"
+            },
             "CampaignName": {
               "type": "string",
-              "description": "Name of the campaign. Format: 'LT-A | [Index] | [YYYYMM] | [Goal] | [Type] | [Geo] | [Language] | [Category]'. [Index] is a 2-digit sequential number (e.g. '01'). Use ISO codes for Geo (e.g. 'MY') and Language (e.g. 'EN'). [Category] represents the high-level business vertical (e.g. 'Furniture').",
+              "description": "Name of the campaign. Format: 'LT-A | [Index] | [YYYYMM] | [Goal] | [Type] | [Geo] | [Language] | [Brand + Product/Offer] | [Category]'. [Index] is a 2-digit sequential number (e.g. '01'). Use ISO codes for Geo (e.g. 'MY') and Language (e.g. 'EN'). [Brand + Product/Offer] is the brand plus specific product/service/offer (e.g. 'Acme Invisalign'). [Category] represents the high-level business vertical (e.g. 'Furniture').",
               "minLength": 1
             },
             "Goal": {
@@ -49,51 +54,70 @@
                 "Phase1_Launch": {
                   "type": "object",
                   "properties": {
-                    "StrategyType": { 
+                    "StrategyType": {
                       "type": "string",
-                      "const": "MaximizeClicks" 
+                      "const": "MaximizeClicks"
                     },
-                    "MaxCPC_Cap_MYR": { 
-                      "type": "number", 
-                      "description": "Bid cap to prevent overspending on single clicks." 
+                    "MaxCPC_Cap_MYR": {
+                      "type": "number",
+                      "description": "Bid cap to prevent overspending on single clicks."
                     }
                   },
-                  "required": ["StrategyType", "MaxCPC_Cap_MYR"],
+                  "required": [
+                    "StrategyType",
+                    "MaxCPC_Cap_MYR"
+                  ],
                   "additionalProperties": false
                 },
                 "Switch_Condition": {
                   "type": "object",
                   "properties": {
-                    "Metric": { 
+                    "Metric": {
                       "type": "string",
-                      "const": "Conversions" 
+                      "const": "Conversions"
                     },
-                    "Threshold": { 
-                      "type": "integer", 
+                    "Threshold": {
+                      "type": "integer",
                       "default": 15,
-                      "description": "Number of conversions required to trigger Phase 2." 
+                      "description": "Number of conversions required to trigger Phase 2."
                     }
                   },
-                  "required": ["Metric", "Threshold"],
+                  "required": [
+                    "Metric",
+                    "Threshold"
+                  ],
                   "additionalProperties": false
                 },
                 "Phase2_Scale": {
                   "type": "object",
                   "properties": {
-                    "StrategyType": { 
+                    "StrategyType": {
                       "type": "string",
-                      "enum": ["TargetCPA", "MaximizeConversions"] 
+                      "enum": [
+                        "TargetCPA",
+                        "MaximizeConversions"
+                      ]
                     },
-                    "TargetCPA_MYR": { 
-                      "type": ["number", "null"],
+                    "TargetCPA_MYR": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
                       "description": "Desired cost per acquisition. Null if using uncapped MaxConv."
                     }
                   },
-                  "required": ["StrategyType", "TargetCPA_MYR"],
+                  "required": [
+                    "StrategyType",
+                    "TargetCPA_MYR"
+                  ],
                   "additionalProperties": false
                 }
               },
-              "required": ["Phase1_Launch", "Switch_Condition", "Phase2_Scale"],
+              "required": [
+                "Phase1_Launch",
+                "Switch_Condition",
+                "Phase2_Scale"
+              ],
               "additionalProperties": false
             },
             "Language": {
@@ -111,7 +135,10 @@
               "properties": {
                 "TargetingMethod": {
                   "type": "string",
-                  "enum": ["PresenceOnly", "PresenceOrInterest"],
+                  "enum": [
+                    "PresenceOnly",
+                    "PresenceOrInterest"
+                  ],
                   "description": "Strictness of location targeting. 'PresenceOnly' = People IN the location. 'PresenceOrInterest' = People IN or INTERESTED IN the location."
                 },
                 "Included": {
@@ -126,13 +153,21 @@
                       },
                       "RadiusKm": {
                         "anyOf": [
-                          { "type": "number", "minimum": 0 },
-                          { "type": "null" }
+                          {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          {
+                            "type": "null"
+                          }
                         ],
                         "description": "Radius in km. Use null for direct City/State targeting."
                       }
                     },
-                    "required": ["Name", "RadiusKm"],
+                    "required": [
+                      "Name",
+                      "RadiusKm"
+                    ],
                     "additionalProperties": false
                   }
                 },
@@ -144,7 +179,11 @@
                   }
                 }
               },
-              "required": ["TargetingMethod", "Included", "Excluded"],
+              "required": [
+                "TargetingMethod",
+                "Included",
+                "Excluded"
+              ],
               "additionalProperties": false
             },
             "AdSchedule": {
@@ -155,7 +194,15 @@
                 "properties": {
                   "DayOfWeek": {
                     "type": "string",
-                    "enum": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+                    "enum": [
+                      "Monday",
+                      "Tuesday",
+                      "Wednesday",
+                      "Thursday",
+                      "Friday",
+                      "Saturday",
+                      "Sunday"
+                    ],
                     "description": "Day of the week."
                   },
                   "StartTime": {
@@ -175,7 +222,12 @@
                     "description": "Percentage to adjust the bid (-90 to 900). 0 means no adjustment."
                   }
                 },
-                "required": ["DayOfWeek", "StartTime", "EndTime", "BidAdjustmentPercent"],
+                "required": [
+                  "DayOfWeek",
+                  "StartTime",
+                  "EndTime",
+                  "BidAdjustmentPercent"
+                ],
                 "additionalProperties": false
               }
             },
@@ -215,6 +267,16 @@
               "items": {
                 "type": "object",
                 "properties": {
+                  "ParentCampaignId": {
+                    "type": "string",
+                    "description": "Must match the parent CampaignId (e.g. 'C01').",
+                    "pattern": "^C\\d{2}$"
+                  },
+                  "AdGroupId": {
+                    "type": "string",
+                    "description": "Short ad group ID linked to its campaign. Format: 'C[NN]-AG[NN]' (e.g. 'C01-AG01').",
+                    "pattern": "^C\\d{2}-AG\\d{2}$"
+                  },
                   "AdGroupName": {
                     "type": "string",
                     "description": "Name of the ad group. Format: '[SubCategory] | [Intent - High/Mid/Low/Remarketing]'. [SubCategory] is the specific product/service subset (e.g. 'Sofas'). [Intent] defines user funnel stage.",
@@ -262,17 +324,17 @@
                   "Targeting": {
                     "type": "object",
                     "properties": {
-                      "Keywords": {
-                        "type": "array",
-                        "description": "List of targeted keywords.",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "Keyword": {
-                              "type": "string",
-                              "description": "Target keyword.",
-                              "minLength": 1
-                            },
+                    "Keywords": {
+                      "type": "array",
+                      "description": "List of targeted keywords. Avoid non-standard characters like !, @, %, , *. Avoid improper capitalization (no ALL CAPS like FREE). Health condition-related services, procedures, or products are not allowed in personalized advertising.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "Keyword": {
+                            "type": "string",
+                            "description": "Target keyword. Avoid non-standard characters and ALL CAPS.",
+                            "minLength": 1
+                          },
                             "MatchType": {
                               "type": "string",
                               "description": "Keyword match type.",
@@ -298,6 +360,8 @@
                   }
                 },
                 "required": [
+                  "ParentCampaignId",
+                  "AdGroupId",
                   "AdGroupName",
                   "DefaultMaxCPCMYR",
                   "ResponsiveSearchAds",
@@ -308,6 +372,7 @@
             }
           },
           "required": [
+            "CampaignId",
             "CampaignName",
             "Goal",
             "CampaignType",
@@ -330,16 +395,19 @@
             "type": "object",
             "description": "The financial targets to measure success.",
             "properties": {
-              "Target_CPL_MYR": { 
+              "Target_CPL_MYR": {
                 "type": "number",
                 "description": "The ideal cost you want to pay for one lead (e.g. 50.00)."
               },
-              "Max_CPL_Ceiling_MYR": { 
+              "Max_CPL_Ceiling_MYR": {
                 "type": "number",
                 "description": "The maximum cost you are willing to pay before pausing an ad (e.g. 100.00)."
               }
             },
-            "required": ["Target_CPL_MYR", "Max_CPL_Ceiling_MYR"],
+            "required": [
+              "Target_CPL_MYR",
+              "Max_CPL_Ceiling_MYR"
+            ],
             "additionalProperties": false
           },
           "Rules_Of_Engagement": {
@@ -349,33 +417,42 @@
             "items": {
               "type": "object",
               "properties": {
-                "RuleName": { 
+                "RuleName": {
                   "type": "string",
                   "description": "A short, simple name for the rule (e.g. 'Stop Wasting Money' or 'Increase Budget')."
                 },
-                "Frequency": { 
-                  "type": "string", 
-                  "description": "When to check this rule. Can be specific (e.g. 'Every Friday', 'Every 3 Days', 'Weekly', 'Bi-Weekly', 'Monthly')." 
-                },
-                "Condition": { 
-                  "type": "string", 
-                  "description": "The specific situation to look for. Use simple logic (e.g. 'CPL < Target_CPL AND ImpressionShare < 80%')." 
-                },
-                "Action": { 
-                  "type": "string", 
-                  "description": "The detailed instruction on what to do, written in simple, plain English." 
-                },
-                "Rationale": { 
+                "Frequency": {
                   "type": "string",
-                  "description": "A simplified explanation of why this action is necessary." 
+                  "description": "When to check this rule. Can be specific (e.g. 'Every Friday', 'Every 3 Days', 'Weekly', 'Bi-Weekly', 'Monthly')."
+                },
+                "Condition": {
+                  "type": "string",
+                  "description": "The specific situation to look for. Use simple logic (e.g. 'CPL < Target_CPL AND ImpressionShare < 80%')."
+                },
+                "Action": {
+                  "type": "string",
+                  "description": "The detailed instruction on what to do, written in simple, plain English."
+                },
+                "Rationale": {
+                  "type": "string",
+                  "description": "A simplified explanation of why this action is necessary."
                 }
               },
-              "required": ["RuleName", "Frequency", "Condition", "Action", "Rationale"],
+              "required": [
+                "RuleName",
+                "Frequency",
+                "Condition",
+                "Action",
+                "Rationale"
+              ],
               "additionalProperties": false
             }
           }
         },
-        "required": ["Metrics_Benchmarks", "Rules_Of_Engagement"],
+        "required": [
+          "Metrics_Benchmarks",
+          "Rules_Of_Engagement"
+        ],
         "additionalProperties": false
       }
     },
