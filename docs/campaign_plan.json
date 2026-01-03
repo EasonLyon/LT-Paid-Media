@@ -19,7 +19,7 @@
             },
             "CampaignName": {
               "type": "string",
-              "description": "Name of the campaign. Format: 'LT-A | [Index] | [YYYYMM] | [Goal] | [Type] | [Geo] | [Language] | [Brand + Product/Offer] | [Category]'. [Index] is a 2-digit sequential number (e.g. '01'). Use ISO codes for Geo (e.g. 'MY') and Language (e.g. 'EN'). [Brand + Product/Offer] is the brand plus specific product/service/offer (e.g. 'Acme Invisalign'). [Category] represents the high-level business vertical (e.g. 'Furniture').",
+              "description": "Name of the campaign. Format: 'LT-SEM | [Index] | [YYYYMM] | [Goal] | [Type] | [Geo] | [Language] | [Brand + Product/Offer] | [Category]'. [Index] is a 2-digit sequential number (e.g. '01'). Use ISO codes for Geo (e.g. 'MY') and Language (e.g. 'EN'). [Brand + Product/Offer] is the brand plus specific product/service/offer (e.g. 'Acme Invisalign'). [Category] represents the high-level business vertical (e.g. 'Furniture').",
               "minLength": 1
             },
             "Goal": {

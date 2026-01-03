@@ -72,7 +72,7 @@ You must output a single JSON object strictly adhering to the provided schema. F
 1.  **Campaigns Array**:
     *   Limit to 1-3 highly relevant campaigns to consolidate budget.
     *   **CampaignId**: SHORT FORMAT: `C[NN]` (e.g., `C01`, `C02`). This is a stable ID used to link Ad Groups to their parent campaign.
-    *   **CampaignName**: STRICT FORMAT: `LT-A | [Index] | [YYYYMM] | [Goal] | [Type] | [Geo] | [Language] | [Brand + Product/Offer] | [Category]`.
+    *   **CampaignName**: STRICT FORMAT: `LT-SEM | [Index] | [YYYYMM] | [Goal] | [Type] | [Geo] | [Language] | [Brand + Product/Offer] | [Category]`.
         *   *Index*: 2-digit sequential number (e.g., `01`, `02`).
         *   *Goal*: Shortened goal name (e.g., `Lead`, `Sales`).
         *   *Geo*: ISO Code (e.g., `MY`, `SG`).

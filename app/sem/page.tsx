@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState, KeyboardEvent } from "react";
 import ReactMarkdown from 'react-markdown';
 import { CampaignPlan, CampaignStructureRow, CampaignStructureStats, NormalizedProjectInitInput, ProjectInitInput, Tier } from "@/types/sem";
 
@@ -132,6 +132,34 @@ function toStateListString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function normalizeLanguageList(list: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const entry of list) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+function parseLanguageList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return normalizeLanguageList(value.filter((entry): entry is string => typeof entry === "string"));
+  }
+  if (typeof value === "string") {
+    return normalizeLanguageList(value.split(/[,\n]/));
+  }
+  return [];
+}
+
+function serializeLanguageList(list: string[]): string {
+  return list.join(", ");
+}
+
 function coerceAdSpend(value: unknown, fallback: number): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -153,12 +181,14 @@ function buildStartFormFromInput(
   const adSpend =
     (source as ProjectInitInput).monthly_adspend_myr ?? (source as NormalizedProjectInitInput).monthly_adspend_myr;
 
+  const languageList = parseLanguageList((source as { language?: unknown }).language);
+
   return {
     website: typeof source.website === "string" ? source.website : fallback.website,
     goal: typeof source.goal === "string" && source.goal ? source.goal : fallback.goal,
     location: typeof source.location === "string" && source.location ? source.location : fallback.location,
     state_list: toStateListString(stateListValue),
-    language: typeof source.language === "string" && source.language ? source.language : fallback.language,
+    language: languageList.length ? serializeLanguageList(languageList) : fallback.language,
     monthly_adspend_myr: coerceAdSpend(adSpend, fallback.monthly_adspend_myr),
     context: typeof source.context === "string" ? source.context : fallback.context,
   };
@@ -323,14 +353,14 @@ export default function SemPage() {
   const { logs, push, clear } = useLogs();
   const [stepStatuses, setStepStatuses] = useState<Record<StepKey, StepStatus>>(buildInitialStepStatuses);
 
+  const languageInputRef = useRef<HTMLInputElement | null>(null);
   const [startForm, setStartForm] = useState<StartFormState>({ ...DEFAULT_START_FORM });
   const [adSpendInput, setAdSpendInput] = useState<string>(DEFAULT_START_FORM.monthly_adspend_myr.toString());
   const [useCustomLocation, setUseCustomLocation] = useState<boolean>(
     !LOCATION_OPTIONS.includes(DEFAULT_START_FORM.location),
   );
-  const [useCustomLanguage, setUseCustomLanguage] = useState<boolean>(
-    !LANGUAGE_OPTIONS.includes(DEFAULT_START_FORM.language),
-  );
+  const [languageChips, setLanguageChips] = useState<string[]>(() => parseLanguageList(DEFAULT_START_FORM.language));
+  const [languageInput, setLanguageInput] = useState<string>("");
   const [campaignFilters, setCampaignFilters] = useState<CampaignFiltersState>({
     tiers: { A: true, B: true, C: false },
     paidFlags: { true: true, false: false },
@@ -461,6 +491,44 @@ export default function SemPage() {
   const toggleSection = (key: CollapsibleKey) => {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
   };
+
+  const updateLanguageChips = useCallback((next: string[]) => {
+    const normalized = normalizeLanguageList(next);
+    setLanguageChips(normalized);
+    setStartForm((prev) => ({ ...prev, language: serializeLanguageList(normalized) }));
+  }, []);
+
+  const handleLanguageInputKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      const value = languageInput.trim();
+      if (!value) return;
+      updateLanguageChips([...languageChips, value]);
+      setLanguageInput("");
+    },
+    [languageInput, languageChips, updateLanguageChips],
+  );
+
+  const handleEditLanguageChip = useCallback(
+    (index: number) => {
+      const value = languageChips[index];
+      if (!value) return;
+      const next = languageChips.filter((_, idx) => idx !== index);
+      updateLanguageChips(next);
+      setLanguageInput(value);
+      requestAnimationFrame(() => languageInputRef.current?.focus());
+    },
+    [languageChips, updateLanguageChips],
+  );
+
+  const handleRemoveLanguageChip = useCallback(
+    (index: number) => {
+      const next = languageChips.filter((_, idx) => idx !== index);
+      updateLanguageChips(next);
+    },
+    [languageChips, updateLanguageChips],
+  );
 
   const handleStart = async (e: FormEvent) => {
     e.preventDefault();
@@ -657,7 +725,8 @@ export default function SemPage() {
       setStartForm({ ...DEFAULT_START_FORM });
       setAdSpendInput(String(DEFAULT_START_FORM.monthly_adspend_myr));
       setUseCustomLocation(!LOCATION_OPTIONS.includes(DEFAULT_START_FORM.location));
-      setUseCustomLanguage(!LANGUAGE_OPTIONS.includes(DEFAULT_START_FORM.language));
+      setLanguageChips(parseLanguageList(DEFAULT_START_FORM.language));
+      setLanguageInput("");
       return;
     }
     let aborted = false;
@@ -665,7 +734,8 @@ export default function SemPage() {
     setStartForm({ ...DEFAULT_START_FORM });
     setAdSpendInput(String(DEFAULT_START_FORM.monthly_adspend_myr));
     setUseCustomLocation(!LOCATION_OPTIONS.includes(DEFAULT_START_FORM.location));
-    setUseCustomLanguage(!LANGUAGE_OPTIONS.includes(DEFAULT_START_FORM.language));
+    setLanguageChips(parseLanguageList(DEFAULT_START_FORM.language));
+    setLanguageInput("");
     const loadSavedInputs = async () => {
       try {
         const res = await fetch(
@@ -688,7 +758,8 @@ export default function SemPage() {
         setStartForm(nextForm);
         setAdSpendInput(String(nextForm.monthly_adspend_myr));
         setUseCustomLocation(!LOCATION_OPTIONS.includes(nextForm.location));
-        setUseCustomLanguage(!LANGUAGE_OPTIONS.includes(nextForm.language));
+        setLanguageChips(parseLanguageList(nextForm.language));
+        setLanguageInput("");
         push(`Loaded saved inputs for ${projectId}`);
       } catch (err: unknown) {
         if (aborted) return;
@@ -2259,34 +2330,47 @@ export default function SemPage() {
                     </label>
                     <label className="grid gap-2">
                       <span className="text-sm font-medium text-gray-700 dark:text-slate-200">Language</span>
-                      <select
-                        className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                        value={useCustomLanguage ? OTHER_VALUE : startForm.language}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          if (value === OTHER_VALUE) {
-                            setUseCustomLanguage(true);
-                          } else {
-                            setUseCustomLanguage(false);
-                            setStartForm((prev) => ({ ...prev, language: value }));
-                          }
-                        }}
-                      >
-                        {LANGUAGE_OPTIONS.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                        <option value={OTHER_VALUE}>Other</option>
-                      </select>
-                      {useCustomLanguage && (
-                        <input
-                          className="border rounded px-3 py-2 mt-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                          value={startForm.language}
-                          onChange={(e) => setStartForm((prev) => ({ ...prev, language: e.target.value }))}
-                          placeholder="Enter a language"
-                        />
-                      )}
+                      <div className="rounded border border-gray-200 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-800">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {languageChips.map((language, index) => (
+                            <div key={`${language}-${index}`} className={`${badgeInfo} gap-1`}>
+                              <button
+                                type="button"
+                                className="focus:outline-none"
+                                onClick={() => handleEditLanguageChip(index)}
+                                aria-label={`Edit language ${language}`}
+                              >
+                                {language}
+                              </button>
+                              <button
+                                type="button"
+                                className="text-xs text-blue-700/70 hover:text-blue-800 dark:text-blue-200/70 dark:hover:text-blue-100"
+                                onClick={() => handleRemoveLanguageChip(index)}
+                                aria-label={`Remove language ${language}`}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                          <input
+                            ref={languageInputRef}
+                            className="min-w-[160px] flex-1 border-none bg-transparent px-1 py-0.5 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none dark:text-slate-100"
+                            value={languageInput}
+                            onChange={(e) => setLanguageInput(e.target.value)}
+                            onKeyDown={handleLanguageInputKeyDown}
+                            placeholder="Type a language and press Enter"
+                            list="language-options"
+                          />
+                          <datalist id="language-options">
+                            {LANGUAGE_OPTIONS.map((option) => (
+                              <option key={option} value={option} />
+                            ))}
+                          </datalist>
+                        </div>
+                      </div>
+                      <div className="text-xs text-gray-500 dark:text-slate-400">
+                        Press Enter to add. Click a chip to edit, or remove it with ×.
+                      </div>
                     </label>
                   </div>
                   <label className="grid gap-2">

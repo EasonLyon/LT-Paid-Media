@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { CampaignPlanPayload, NormalizedProjectInitInput } from "@/types/sem";
 
 const PROMPT_ID = "pmpt_69306275f10c8197b1310916806b42490e59ebe827e88503";
-const PROMPT_VERSION = "17";
+const PROMPT_VERSION = "18";
 
 function getOpenAIClient() {
   if (!process.env.OPENAI_API_KEY) {
