@@ -71,8 +71,6 @@ interface AppliedCampaignFilters {
   seoFlags: boolean[];
 }
 
-const MIN_AD_SPEND_MYR = 1000;
-const MAX_SLIDER_AD_SPEND_MYR = 50000;
 const GOAL_OPTIONS = ["Lead", "Traffic", "Sales", "Awareness"];
 const LOCATION_OPTIONS = ["Malaysia", "Singapore", "Indonesia", "Philippines", "Thailand"];
 const LANGUAGE_OPTIONS = ["English", "Malay", "Chinese", "Tamil"];
@@ -160,11 +158,24 @@ function serializeLanguageList(list: string[]): string {
   return list.join(", ");
 }
 
+function formatAdSpend(value: number): string {
+  return value.toLocaleString("en-MY");
+}
+
+function parseAdSpendInput(raw: string): number | null {
+  const cleaned = raw.replace(/,/g, "").trim();
+  if (!cleaned) return null;
+  if (!/^\d+$/.test(cleaned)) return null;
+  const parsed = Number(cleaned);
+  if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isSafeInteger(parsed)) return null;
+  return parsed;
+}
+
 function coerceAdSpend(value: unknown, fallback: number): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return Math.round(value);
   if (typeof value === "string") {
     const parsed = Number(value.replace(/,/g, ""));
-    if (Number.isFinite(parsed)) return parsed;
+    if (Number.isFinite(parsed) && parsed > 0) return Math.round(parsed);
   }
   return fallback;
 }
@@ -355,7 +366,7 @@ export default function SemPage() {
 
   const languageInputRef = useRef<HTMLInputElement | null>(null);
   const [startForm, setStartForm] = useState<StartFormState>({ ...DEFAULT_START_FORM });
-  const [adSpendInput, setAdSpendInput] = useState<string>(DEFAULT_START_FORM.monthly_adspend_myr.toString());
+  const [adSpendInput, setAdSpendInput] = useState<string>(formatAdSpend(DEFAULT_START_FORM.monthly_adspend_myr));
   const [useCustomLocation, setUseCustomLocation] = useState<boolean>(
     !LOCATION_OPTIONS.includes(DEFAULT_START_FORM.location),
   );
@@ -723,7 +734,7 @@ export default function SemPage() {
   useEffect(() => {
     if (!projectId) {
       setStartForm({ ...DEFAULT_START_FORM });
-      setAdSpendInput(String(DEFAULT_START_FORM.monthly_adspend_myr));
+      setAdSpendInput(formatAdSpend(DEFAULT_START_FORM.monthly_adspend_myr));
       setUseCustomLocation(!LOCATION_OPTIONS.includes(DEFAULT_START_FORM.location));
       setLanguageChips(parseLanguageList(DEFAULT_START_FORM.language));
       setLanguageInput("");
@@ -732,7 +743,7 @@ export default function SemPage() {
     let aborted = false;
     // reset fields when projectId changes before loading any cached inputs
     setStartForm({ ...DEFAULT_START_FORM });
-    setAdSpendInput(String(DEFAULT_START_FORM.monthly_adspend_myr));
+    setAdSpendInput(formatAdSpend(DEFAULT_START_FORM.monthly_adspend_myr));
     setUseCustomLocation(!LOCATION_OPTIONS.includes(DEFAULT_START_FORM.location));
     setLanguageChips(parseLanguageList(DEFAULT_START_FORM.language));
     setLanguageInput("");
@@ -756,7 +767,7 @@ export default function SemPage() {
         const nextForm = buildStartFormFromInput(source);
         if (aborted) return;
         setStartForm(nextForm);
-        setAdSpendInput(String(nextForm.monthly_adspend_myr));
+        setAdSpendInput(formatAdSpend(nextForm.monthly_adspend_myr));
         setUseCustomLocation(!LOCATION_OPTIONS.includes(nextForm.location));
         setLanguageChips(parseLanguageList(nextForm.language));
         setLanguageInput("");
@@ -1702,31 +1713,21 @@ export default function SemPage() {
   const isStep1Running = stepStatuses.start.status === "running";
   const isStep8Running = stepStatuses.campaignPlan.status === "running";
 
-  const sanitizeAdSpend = (value: number): number => {
-    if (!Number.isFinite(value)) return MIN_AD_SPEND_MYR;
-    return Math.max(MIN_AD_SPEND_MYR, Math.round(value));
-  };
-
-  const handleAdSpendSliderChange = (value: number) => {
-    const sanitized = sanitizeAdSpend(value);
-    setAdSpendInput(String(sanitized));
-    setStartForm((prev) => ({ ...prev, monthly_adspend_myr: sanitized }));
-  };
-
   const handleAdSpendInputChange = (raw: string) => {
     setAdSpendInput(raw);
-    const numeric = Number(raw);
-    if (!Number.isNaN(numeric)) {
-      const sanitized = sanitizeAdSpend(numeric);
-      setStartForm((prev) => ({ ...prev, monthly_adspend_myr: sanitized }));
-    }
+    const parsed = parseAdSpendInput(raw);
+    if (parsed === null) return;
+    setStartForm((prev) => ({ ...prev, monthly_adspend_myr: parsed }));
   };
 
   const handleAdSpendBlur = () => {
-    const numeric = Number(adSpendInput);
-    const sanitized = sanitizeAdSpend(Number.isFinite(numeric) ? numeric : MIN_AD_SPEND_MYR);
-    setAdSpendInput(String(sanitized));
-    setStartForm((prev) => ({ ...prev, monthly_adspend_myr: sanitized }));
+    const parsed = parseAdSpendInput(adSpendInput);
+    if (parsed === null) {
+      setAdSpendInput(formatAdSpend(startForm.monthly_adspend_myr));
+      return;
+    }
+    setAdSpendInput(formatAdSpend(parsed));
+    setStartForm((prev) => ({ ...prev, monthly_adspend_myr: parsed }));
   };
 
   const getSelectedCampaignFilters = (): AppliedCampaignFilters => {
@@ -2389,36 +2390,24 @@ export default function SemPage() {
                 <div className="rounded-lg border border-gray-200 bg-gray-50 p-5 space-y-3 dark:border-slate-700 dark:bg-slate-900/40">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-gray-800 dark:text-slate-100">Monthly ad spend (MYR)</span>
-                    <span className="text-xs text-gray-500 dark:text-slate-400">Slide RM1k–50k or type to go above</span>
+                    <span className="text-xs text-gray-500 dark:text-slate-400">Type any positive amount (commas ok)</span>
                   </div>
-                  <input
-                    type="range"
-                    min={MIN_AD_SPEND_MYR}
-                    max={MAX_SLIDER_AD_SPEND_MYR}
-                    step={100}
-                    value={Math.min(startForm.monthly_adspend_myr, MAX_SLIDER_AD_SPEND_MYR)}
-                    onChange={(e) => handleAdSpendSliderChange(Number(e.target.value))}
-                    className="w-full accent-blue-600"
-                  />
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm text-gray-600">RM</span>
                     <input
-                      type="number"
-                      min={MIN_AD_SPEND_MYR}
-                      step={500}
+                      type="text"
                       className="border rounded px-3 py-2 w-40 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                       value={adSpendInput}
                       onChange={(e) => handleAdSpendInputChange(e.target.value)}
                       onBlur={handleAdSpendBlur}
-                      inputMode="numeric"
+                      inputMode="text"
+                      pattern="[0-9,]*"
+                      placeholder="5,000"
                     />
                     <span className="text-sm text-gray-600">
                       Selected: RM{startForm.monthly_adspend_myr.toLocaleString("en-MY")}
                     </span>
                   </div>
-                  {startForm.monthly_adspend_myr < MIN_AD_SPEND_MYR && (
-                    <div className="text-sm text-red-600">Min RM{MIN_AD_SPEND_MYR.toLocaleString("en-MY")}.</div>
-                  )}
                 </div>
 
                 <button type="submit" className={primaryButton} disabled={isBusy}>
