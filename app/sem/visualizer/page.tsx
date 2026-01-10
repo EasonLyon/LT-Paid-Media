@@ -1,7 +1,7 @@
 'use client';
 
 import Link from "next/link";
-import { Workbook, type Row } from "exceljs";
+import { Workbook, type Fill, type Row } from "exceljs";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
@@ -404,12 +404,18 @@ type ExportSheet = {
   rowStyle?: (row: ExportRow, rowIndex: number, excelRow: Row, columns: string[]) => void;
 };
 
-const AD_GROUP_ROW_FILLS: Record<AdGroupTableRow["type"], string> = {
-  Headline: "FFD9E8FF",
-  Description: "FFE6F4EA",
-  Keyword: "FFFFF5CC",
+type AdGroupLayoutEntry = {
+  adGroupName: string;
+  headlines: Array<{ text: string; charCount: number | null }>;
+  descriptions: Array<{ text: string; charCount: number | null }>;
+  keywords: Array<{ text: string; metric: number | null }>;
 };
-const AD_GROUP_ALERT_FILL = "FFFFC7CE";
+
+type CampaignAdGroupLayout = {
+  campaignName: string;
+  adGroups: AdGroupLayoutEntry[];
+};
+
 const AD_GROUP_ROW_FILLS_HEX: Record<AdGroupTableRow["type"], string> = {
   Headline: "#D9E8FF",
   Description: "#E6F4EA",
@@ -485,67 +491,35 @@ function applyCampaignRowStyle(row: ExportRow, _rowIndex: number, excelRow: Row,
     applyNameCellFill(row["Campaign Name"], CAMPAIGN_NAME_PALETTE, excelRow, campaignIndex + 1);
   }
 }
-function applyAdGroupRowStyle(row: ExportRow, _rowIndex: number, excelRow: Row, columns: string[]) {
-  const type = row.Type;
-  if (typeof type !== "string") return;
-  const fillColor = AD_GROUP_ROW_FILLS[type as AdGroupTableRow["type"]];
-  if (!fillColor) return;
-  const typeIndex = columns.indexOf("Type");
-  const characterIndex = columns.indexOf("Char/Vol");
-  const campaignIndex = columns.indexOf("Campaign Name");
-  const nameIndex = columns.indexOf("Name");
-  if (typeIndex !== -1) {
-    const cell = excelRow.getCell(typeIndex + 1);
-    cell.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: fillColor },
-    };
-  }
-  if (campaignIndex !== -1) {
-    applyNameCellFill(row["Campaign Name"], CAMPAIGN_NAME_PALETTE, excelRow, campaignIndex + 1);
-  }
-  if (nameIndex !== -1) {
-    applyNameCellFill(row.Name, AD_GROUP_NAME_PALETTE, excelRow, nameIndex + 1);
-  }
-  if (characterIndex !== -1) {
-    const characterCell = excelRow.getCell(characterIndex + 1);
-    const characterValue =
-      typeof row["Char/Vol"] === "number"
-        ? row["Char/Vol"]
-        : Number.parseFloat(String(row["Char/Vol"] ?? ""));
-    const exceeds =
-      (type === "Headline" && characterValue > 30) || (type === "Description" && characterValue > 90);
-    characterCell.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: exceeds ? AD_GROUP_ALERT_FILL : fillColor },
-    };
-  }
-}
 
 async function downloadWorkbook(
   sheets: ExportSheet[],
   filename: string,
 ) {
   const workbook = new Workbook();
-  sheets.forEach((sheetDef) => {
-    const sheet = workbook.addWorksheet(sheetDef.name);
-    sheet.addRow(sheetDef.columns);
-    sheet.getRow(1).font = { bold: true };
-    sheetDef.rows.forEach((row, rowIndex) => {
-      const excelRow = sheet.addRow(sheetDef.columns.map((column) => row[column] ?? ""));
-      sheetDef.rowStyle?.(row, rowIndex, excelRow, sheetDef.columns);
-    });
-    sheetDef.columns.forEach((column, index) => {
-      const maxCellLength = Math.max(
-        column.length,
-        ...sheetDef.rows.map((row) => String(row[column] ?? "").length),
-      );
-      const paddedWidth = Math.min(Math.max(maxCellLength + 2, 10), 60);
-      sheet.getColumn(index + 1).width = paddedWidth;
-    });
+  sheets.forEach((sheetDef) => addStandardExportSheet(workbook, sheetDef));
+  await saveWorkbook(workbook, filename);
+}
+
+function addStandardExportSheet(workbook: Workbook, sheetDef: ExportSheet) {
+  const sheet = workbook.addWorksheet(sheetDef.name);
+  sheet.addRow(sheetDef.columns);
+  sheet.getRow(1).font = { bold: true };
+  sheetDef.rows.forEach((row, rowIndex) => {
+    const excelRow = sheet.addRow(sheetDef.columns.map((column) => row[column] ?? ""));
+    sheetDef.rowStyle?.(row, rowIndex, excelRow, sheetDef.columns);
   });
+  sheetDef.columns.forEach((column, index) => {
+    const maxCellLength = Math.max(
+      column.length,
+      ...sheetDef.rows.map((row) => String(row[column] ?? "").length),
+    );
+    const paddedWidth = Math.min(Math.max(maxCellLength + 2, 10), 60);
+    sheet.getColumn(index + 1).width = paddedWidth;
+  });
+}
+
+async function saveWorkbook(workbook: Workbook, filename: string) {
   const buffer = await workbook.xlsx.writeBuffer();
   const blob = new Blob([buffer], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -558,6 +532,170 @@ async function downloadWorkbook(
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function buildAdGroupLayout(campaigns: CampaignPlan[]): CampaignAdGroupLayout[] {
+  return campaigns.map((campaign, campaignIdx) => {
+    const campaignName = campaign.CampaignName ?? `Campaign ${campaignIdx + 1}`;
+    const adGroups = (campaign.AdGroups ?? []).map((adGroup, adGroupIdx) => {
+      const adGroupName = adGroup.AdGroupName ?? `Ad Group ${adGroupIdx + 1}`;
+      const ads = Array.isArray(adGroup.ResponsiveSearchAds) ? adGroup.ResponsiveSearchAds : [];
+      const headlines = ads.flatMap((ad) => {
+        const meta = ad.HeadlinesMeta ?? ad.Headlines?.map((text) => ({ Text: text, CharCount: text.length })) ?? [];
+        return meta.map((item) => ({
+          text: item.Text ?? "",
+          charCount:
+            typeof item.CharCount === "number" && Number.isFinite(item.CharCount)
+              ? item.CharCount
+              : item.Text
+                ? item.Text.length
+                : null,
+        }));
+      });
+      const descriptions = ads.flatMap((ad) => {
+        const meta =
+          ad.DescriptionsMeta ?? ad.Descriptions?.map((text) => ({ Text: text, CharCount: text.length })) ?? [];
+        return meta.map((item) => ({
+          text: item.Text ?? "",
+          charCount:
+            typeof item.CharCount === "number" && Number.isFinite(item.CharCount)
+              ? item.CharCount
+              : item.Text
+                ? item.Text.length
+                : null,
+        }));
+      });
+      const keywords = keywordList(adGroup.Targeting, false).map((kw) => ({
+        text: kw.Keyword ?? "",
+        metric:
+          typeof kw.AvgMonthlySearches === "number" && Number.isFinite(kw.AvgMonthlySearches)
+            ? kw.AvgMonthlySearches
+            : null,
+      }));
+      return {
+        adGroupName,
+        headlines: headlines.slice(0, 12),
+        descriptions: descriptions.slice(0, 4),
+        keywords,
+      };
+    });
+    return { campaignName, adGroups };
+  });
+}
+
+function addAdGroupLayoutSheet(workbook: Workbook, campaigns: CampaignPlan[]) {
+  const sheet = workbook.addWorksheet("Ad Group");
+  const layout = buildAdGroupLayout(campaigns);
+  const labelColumnWidth = 24;
+  const textColumnWidth = 42;
+  const metricColumnWidth = 12;
+  const spacerColumnWidth = 2;
+  const gapColumnWidth = 4;
+  const adGroupBlockWidth = 4;
+  const campaignFillPalette = ["FFE8F0FE", "FFFDEBD0", "FFE8F6E8", "FFF8E8FF", "FFFFF2CC", "FFD9EDF7"];
+  const adGroupFillPalette = ["FFD5F5E3", "FFFBE5D6", "FFE4F0F6", "FFFDE2E4", "FFE8E2F5", "FFE5F7E9"];
+  const spacerFill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4A4A4A" } } as const;
+  const separatorFill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFEFEF" } } as const;
+
+  sheet.getColumn(1).width = labelColumnWidth;
+  sheet.getCell(1, 1).value = "Campaign";
+  sheet.getCell(2, 1).value = "Ad Group";
+  for (let i = 0; i < 12; i += 1) {
+    sheet.getCell(3 + i, 1).value = `Headline ${i + 1}`;
+  }
+  for (let i = 0; i < 4; i += 1) {
+    sheet.getCell(15 + i, 1).value = `Description ${i + 1}`;
+  }
+  sheet.getCell(20, 1).value = "Search Keywords";
+  const boldLabelRows = [1, 2, ...Array.from({ length: 12 }, (_, idx) => 3 + idx), ...Array.from({ length: 4 }, (_, idx) => 15 + idx), 20];
+  boldLabelRows.forEach((row) => {
+    sheet.getCell(row, 1).font = { bold: true };
+  });
+
+  const applyRowFill = (row: number, startColumn: number, endColumn: number, fill: Fill) => {
+    for (let col = startColumn; col <= endColumn; col += 1) {
+      sheet.getCell(row, col).fill = fill;
+    }
+  };
+
+  let currentColumn = 2;
+  layout.forEach((campaign, campaignIdx) => {
+    if (!campaign.adGroups.length) return;
+    const campaignStartColumn = currentColumn;
+    campaign.adGroups.forEach((adGroup, idx) => {
+      const textColumn = currentColumn + idx * adGroupBlockWidth;
+      const metricColumn = textColumn + 1;
+      const spacerColumn = textColumn + 2;
+      const gapColumn = textColumn + 3;
+      const adGroupFill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: adGroupFillPalette[idx % adGroupFillPalette.length] },
+      } as const;
+
+      sheet.getColumn(textColumn).width = textColumnWidth;
+      sheet.getColumn(textColumn).alignment = { wrapText: true, vertical: "top" };
+      sheet.getColumn(metricColumn).width = metricColumnWidth;
+      sheet.getColumn(metricColumn).alignment = { horizontal: "center", vertical: "top" };
+      sheet.getColumn(spacerColumn).width = spacerColumnWidth;
+      sheet.getColumn(spacerColumn).fill = spacerFill;
+      sheet.getColumn(gapColumn).width = gapColumnWidth;
+
+      sheet.getCell(2, textColumn).value = adGroup.adGroupName;
+      sheet.getCell(2, textColumn).font = { bold: true };
+      sheet.getCell(2, metricColumn).value = "Character";
+      applyRowFill(2, textColumn, metricColumn, adGroupFill);
+
+      adGroup.headlines.forEach((headline, headlineIdx) => {
+        const row = 3 + headlineIdx;
+        sheet.getCell(row, textColumn).value = headline.text;
+        if (headline.charCount !== null) sheet.getCell(row, metricColumn).value = headline.charCount;
+      });
+
+      adGroup.descriptions.forEach((description, descriptionIdx) => {
+        const row = 15 + descriptionIdx;
+        sheet.getCell(row, textColumn).value = description.text;
+        if (description.charCount !== null) sheet.getCell(row, metricColumn).value = description.charCount;
+      });
+
+      adGroup.keywords.forEach((keyword, keywordIdx) => {
+        const row = 20 + keywordIdx;
+        sheet.getCell(row, textColumn).value = keyword.text;
+        if (keyword.metric !== null) sheet.getCell(row, metricColumn).value = keyword.metric;
+      });
+    });
+
+    const campaignEndColumn = campaignStartColumn + campaign.adGroups.length * adGroupBlockWidth - 1;
+    sheet.mergeCells(1, campaignStartColumn, 1, campaignEndColumn);
+    sheet.getCell(1, campaignStartColumn).value = campaign.campaignName;
+    sheet.getCell(1, campaignStartColumn).alignment = { horizontal: "center", vertical: "middle" };
+    sheet.getCell(1, campaignStartColumn).font = { bold: true };
+    applyRowFill(1, campaignStartColumn, campaignEndColumn, {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: campaignFillPalette[campaignIdx % campaignFillPalette.length] },
+    });
+
+    currentColumn = campaignEndColumn + 1;
+  });
+
+  const lastColumn = Math.max(1, currentColumn - 1);
+  applyRowFill(19, 1, lastColumn, separatorFill);
+  for (let column = 2; column < currentColumn; column += adGroupBlockWidth) {
+    const spacerColumn = column + 2;
+    sheet.getCell(19, spacerColumn).fill = spacerFill;
+  }
+}
+
+async function downloadAdGroupWorkbook(
+  campaigns: CampaignPlan[],
+  filename: string,
+  extraSheets: ExportSheet[] = [],
+) {
+  const workbook = new Workbook();
+  extraSheets.forEach((sheetDef) => addStandardExportSheet(workbook, sheetDef));
+  addAdGroupLayoutSheet(workbook, campaigns);
+  await saveWorkbook(workbook, filename);
 }
 
 function CampaignVisualizerPageContent() {
@@ -1666,7 +1804,7 @@ function CampaignVisualizerPageContent() {
               <SelectContent>
                 <SelectItem value="performance">Performance calculator</SelectItem>
                 <SelectItem value="breakdown">Campaign breakdown</SelectItem>
-                <SelectItem value="tables">QA tables & exports</SelectItem>
+                <SelectItem value="tables">Media Plan</SelectItem>
                 <SelectItem value="playbook">Optimization Playbook</SelectItem>
               </SelectContent>
             </Select>
@@ -1688,7 +1826,7 @@ function CampaignVisualizerPageContent() {
               value="tables"
               className="rounded-full px-4 py-2 text-sm font-semibold text-muted transition-all duration-200 ease-out data-[state=active]:-translate-y-px data-[state=active]:scale-[1.02] data-[state=active]:bg-[var(--accent)] data-[state=active]:!text-white data-[state=active]:shadow-md"
             >
-              QA tables & exports
+              Media Plan
             </TabsTrigger>
             <TabsTrigger
               value="playbook"
@@ -2263,7 +2401,7 @@ function CampaignVisualizerPageContent() {
           <Card>
             <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <CardTitle>QA tables & exports</CardTitle>
+                <CardTitle>Media Plan</CardTitle>
                 <CardDescription>
                   Tables are collapsed by default. Expand each card to review and export individually.
                 </CardDescription>
@@ -2275,7 +2413,7 @@ function CampaignVisualizerPageContent() {
                   onClick={() =>
                     downloadCsv(
                       exportAllRows,
-                      buildExportFilename(entityValue, "qa-tables.csv"),
+                      buildExportFilename(entityValue, "media-plan.csv"),
                       [...EXPORT_ALL_HEADERS],
                     )
                   }
@@ -2286,7 +2424,9 @@ function CampaignVisualizerPageContent() {
                 <Button
                   variant="success"
                   onClick={() =>
-                    void downloadWorkbook(
+                    void downloadAdGroupWorkbook(
+                      campaigns,
+                      buildExportFilename(entityValue, "media-plan.xlsx"),
                       [
                         {
                           name: "Campaign Type",
@@ -2294,14 +2434,7 @@ function CampaignVisualizerPageContent() {
                           rows: campaignExportRows,
                           rowStyle: applyCampaignRowStyle,
                         },
-                        {
-                          name: "Ad Group",
-                          columns: AD_GROUP_TABLE_COLUMNS.map((col) => col.label),
-                          rows: adGroupExportRows,
-                          rowStyle: applyAdGroupRowStyle,
-                        },
                       ],
-                      buildExportFilename(entityValue, "qa-tables.xlsx"),
                     )
                   }
                   disabled={campaignExportRows.length === 0 && adGroupExportRows.length === 0}
@@ -2398,17 +2531,7 @@ function CampaignVisualizerPageContent() {
                 )
               }
               onExportExcel={() =>
-                void downloadWorkbook(
-                  [
-                    {
-                      name: "Ad Group",
-                      columns: AD_GROUP_TABLE_COLUMNS.map((col) => col.label),
-                      rows: adGroupExportRows,
-                      rowStyle: applyAdGroupRowStyle,
-                    },
-                  ],
-                  buildExportFilename(entityValue, "ad-group.xlsx"),
-                )
+                void downloadAdGroupWorkbook(campaigns, buildExportFilename(entityValue, "ad-group.xlsx"))
               }
             >
               <div className="overflow-x-auto">
