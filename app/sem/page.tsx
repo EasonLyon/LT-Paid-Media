@@ -43,7 +43,7 @@ type StepKey =
   | "visualizer"
   | "landingPageInput"
   | "landingPagePlan";
-type CollapsibleKey = "project" | "step1" | "runSteps" | "step7" | "step8" | "step9" | "step10";
+type CollapsibleKey = "project" | "duplicate" | "step1" | "runSteps" | "step7" | "step8" | "step9" | "step10";
 
 interface StepStatus {
   status: "idle" | "running" | "success" | "error";
@@ -75,6 +75,7 @@ const GOAL_OPTIONS = ["Lead", "Traffic", "Sales", "Awareness"];
 const LOCATION_OPTIONS = ["Malaysia", "Singapore", "Indonesia", "Philippines", "Thailand"];
 const LANGUAGE_OPTIONS = ["English", "Malay", "Chinese", "Tamil"];
 const OTHER_VALUE = "__other";
+const SAFE_PROJECT_ID = /^[a-zA-Z0-9._-]+$/;
 
 const primaryButton =
   "inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50";
@@ -322,6 +323,16 @@ function buildLocalProjectIdFallback(): string {
   return `${prefix}-${suffix}`;
 }
 
+function buildDuplicateProjectId(sourceId: string, existingIds: string[]): string {
+  const base = `${sourceId}-Copy`;
+  if (!existingIds.includes(base)) return base;
+  let counter = 2;
+  while (existingIds.includes(`${base}-${counter}`)) {
+    counter += 1;
+  }
+  return `${base}-${counter}`;
+}
+
 function getShortFileLabel(filename: string): string {
   const dashIndex = filename.indexOf("-");
   if (dashIndex > 0) {
@@ -372,6 +383,28 @@ export default function SemPage() {
   );
   const [languageChips, setLanguageChips] = useState<string[]>(() => parseLanguageList(DEFAULT_START_FORM.language));
   const [languageInput, setLanguageInput] = useState<string>("");
+  const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
+  const [duplicateSourceId, setDuplicateSourceId] = useState<string>("");
+  const [duplicateTargetId, setDuplicateTargetId] = useState<string>("");
+  const [hasEditedDuplicateTargetId, setHasEditedDuplicateTargetId] = useState(false);
+  const [isDuplicatingProject, setIsDuplicatingProject] = useState(false);
+  const [duplicateError, setDuplicateError] = useState<string | null>(null);
+  const [duplicateNotice, setDuplicateNotice] = useState<string | null>(null);
+  const [rerunStep1AfterDuplicate, setRerunStep1AfterDuplicate] = useState(false);
+  const [rerunSteps2to9AfterDuplicate, setRerunSteps2to9AfterDuplicate] = useState(false);
+  const [pendingDuplicateActions, setPendingDuplicateActions] = useState<{
+    targetProjectId: string;
+    input: StartFormState;
+    rerunStep1: boolean;
+    rerunSteps2to9: boolean;
+  } | null>(null);
+  const [duplicateForm, setDuplicateForm] = useState<StartFormState>({ ...DEFAULT_START_FORM });
+  const [duplicateAdSpendInput, setDuplicateAdSpendInput] = useState<string>(
+    formatAdSpend(DEFAULT_START_FORM.monthly_adspend_myr),
+  );
+  const [duplicateUseCustomLocation, setDuplicateUseCustomLocation] = useState<boolean>(
+    !LOCATION_OPTIONS.includes(DEFAULT_START_FORM.location),
+  );
   const [campaignFilters, setCampaignFilters] = useState<CampaignFiltersState>({
     tiers: { A: true, B: true, C: false },
     paidFlags: { true: true, false: false },
@@ -388,6 +421,7 @@ export default function SemPage() {
   const [step8Elapsed, setStep8Elapsed] = useState<number>(0);
   const [openSections, setOpenSections] = useState<Record<CollapsibleKey, boolean>>({
     project: true,
+    duplicate: false,
     step1: true,
     runSteps: true,
     step7: true,
@@ -502,6 +536,20 @@ export default function SemPage() {
   const toggleSection = (key: CollapsibleKey) => {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
   };
+
+  const applyStartFormState = useCallback((next: StartFormState) => {
+    setStartForm(next);
+    setAdSpendInput(formatAdSpend(next.monthly_adspend_myr));
+    setUseCustomLocation(!LOCATION_OPTIONS.includes(next.location));
+    setLanguageChips(parseLanguageList(next.language));
+    setLanguageInput("");
+  }, []);
+
+  const applyDuplicateFormState = useCallback((next: StartFormState) => {
+    setDuplicateForm(next);
+    setDuplicateAdSpendInput(formatAdSpend(next.monthly_adspend_myr));
+    setDuplicateUseCustomLocation(!LOCATION_OPTIONS.includes(next.location));
+  }, []);
 
   const updateLanguageChips = useCallback((next: string[]) => {
     const normalized = normalizeLanguageList(next);
@@ -731,46 +779,39 @@ export default function SemPage() {
     }
   }, []);
 
+  const fetchProjectInputs = useCallback(async (pid: string): Promise<StartFormState | null> => {
+    const res = await fetch(
+      `/api/sem/project-files?projectId=${encodeURIComponent(pid)}&file=00-user-input.json`,
+      { cache: "no-store" },
+    );
+    if (res.status === 404) return null;
+    const json = (await res.json()) as {
+      data?: { rawInput?: ProjectInitInput; normalizedInput?: NormalizedProjectInitInput };
+      error?: string;
+    };
+    if (!res.ok || json.error) {
+      const message = json.error ?? res.statusText;
+      throw new Error(message);
+    }
+    const source = json.data?.rawInput ?? json.data?.normalizedInput;
+    if (!source) return null;
+    return buildStartFormFromInput(source);
+  }, []);
+
   useEffect(() => {
     if (!projectId) {
-      setStartForm({ ...DEFAULT_START_FORM });
-      setAdSpendInput(formatAdSpend(DEFAULT_START_FORM.monthly_adspend_myr));
-      setUseCustomLocation(!LOCATION_OPTIONS.includes(DEFAULT_START_FORM.location));
-      setLanguageChips(parseLanguageList(DEFAULT_START_FORM.language));
-      setLanguageInput("");
+      applyStartFormState({ ...DEFAULT_START_FORM });
       return;
     }
     let aborted = false;
     // reset fields when projectId changes before loading any cached inputs
-    setStartForm({ ...DEFAULT_START_FORM });
-    setAdSpendInput(formatAdSpend(DEFAULT_START_FORM.monthly_adspend_myr));
-    setUseCustomLocation(!LOCATION_OPTIONS.includes(DEFAULT_START_FORM.location));
-    setLanguageChips(parseLanguageList(DEFAULT_START_FORM.language));
-    setLanguageInput("");
+    applyStartFormState({ ...DEFAULT_START_FORM });
     const loadSavedInputs = async () => {
       try {
-        const res = await fetch(
-          `/api/sem/project-files?projectId=${encodeURIComponent(projectId)}&file=00-user-input.json`,
-          { cache: "no-store" },
-        );
-        if (res.status === 404) return;
-        const json = (await res.json()) as {
-          data?: { rawInput?: ProjectInitInput; normalizedInput?: NormalizedProjectInitInput };
-          error?: string;
-        };
-        if (!res.ok || json.error) {
-          const message = json.error ?? res.statusText;
-          throw new Error(message);
-        }
-        const source = json.data?.rawInput ?? json.data?.normalizedInput;
-        if (!source) return;
-        const nextForm = buildStartFormFromInput(source);
+        const nextForm = await fetchProjectInputs(projectId);
+        if (!nextForm) return;
         if (aborted) return;
-        setStartForm(nextForm);
-        setAdSpendInput(formatAdSpend(nextForm.monthly_adspend_myr));
-        setUseCustomLocation(!LOCATION_OPTIONS.includes(nextForm.location));
-        setLanguageChips(parseLanguageList(nextForm.language));
-        setLanguageInput("");
+        applyStartFormState(nextForm);
         push(`Loaded saved inputs for ${projectId}`);
       } catch (err: unknown) {
         if (aborted) return;
@@ -782,7 +823,7 @@ export default function SemPage() {
     return () => {
       aborted = true;
     };
-  }, [projectId, push]);
+  }, [applyStartFormState, fetchProjectInputs, projectId, push]);
 
   const handleProjectIdChange = (value: string) => {
     hasUserSetProjectIdRef.current = true;
@@ -816,6 +857,183 @@ export default function SemPage() {
   const handleNewProject = async () => {
     resetRunPanels();
     await generateNewProjectId();
+  };
+
+  const openDuplicateModal = () => {
+    setDuplicateError(null);
+    setDuplicateNotice(null);
+    setRerunStep1AfterDuplicate(false);
+    setRerunSteps2to9AfterDuplicate(false);
+    setIsDuplicateModalOpen(true);
+    const existingIds = existingProjects.map((project) => project.id);
+    const initialSource =
+      projectId && existingIds.includes(projectId) ? projectId : existingIds.length ? existingIds[0] : "";
+    if (initialSource) {
+      setDuplicateSourceId(initialSource);
+      setHasEditedDuplicateTargetId(false);
+      setDuplicateTargetId(buildDuplicateProjectId(initialSource, existingIds));
+      void fetchProjectInputs(initialSource)
+        .then((inputs) => {
+          if (inputs) applyDuplicateFormState(inputs);
+        })
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : "Unable to load inputs";
+          setDuplicateError(message);
+        });
+    } else {
+      setDuplicateSourceId("");
+      setDuplicateTargetId("");
+      setHasEditedDuplicateTargetId(false);
+      applyDuplicateFormState({ ...DEFAULT_START_FORM });
+    }
+  };
+
+  const closeDuplicateModal = () => {
+    if (isDuplicatingProject) return;
+    setIsDuplicateModalOpen(false);
+  };
+
+  const handleDuplicateSourceChange = async (value: string) => {
+    setDuplicateSourceId(value);
+    setDuplicateError(null);
+    setDuplicateNotice(null);
+    const existingIds = existingProjects.map((project) => project.id);
+    if (!hasEditedDuplicateTargetId) {
+      setDuplicateTargetId(value ? buildDuplicateProjectId(value, existingIds) : "");
+    }
+    if (!value) {
+      applyDuplicateFormState({ ...DEFAULT_START_FORM });
+      return;
+    }
+    try {
+      const inputs = await fetchProjectInputs(value);
+      if (inputs) applyDuplicateFormState(inputs);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to load inputs";
+      setDuplicateError(message);
+    }
+  };
+
+  const handleDuplicateTargetChange = (value: string) => {
+    setHasEditedDuplicateTargetId(true);
+    setDuplicateTargetId(value);
+    setDuplicateError(null);
+  };
+
+  const runStartProject = async (targetId: string, input: StartFormState) => {
+    if (!targetId) {
+      push("Provide projectId first");
+      return false;
+    }
+    setIsBusy(true);
+    setProgress(0);
+    startStep1Timer();
+    updateStepStatus("start", { status: "running", message: "Running Step 1" });
+    push("Starting Step 1 – OpenAI init");
+    try {
+      const payload = {
+        projectId: targetId,
+        website: input.website,
+        goal: input.goal,
+        location: input.location,
+        state_list: input.state_list || undefined,
+        language: input.language,
+        monthly_adspend_myr: input.monthly_adspend_myr,
+        context: input.context || undefined,
+      };
+      const res = await callApi<{ projectId: string }>("start", payload);
+      setProjectId(res.projectId);
+      persistProjectId(res.projectId);
+      refreshProjectFiles(res.projectId);
+      void refreshExistingProjects();
+      push(`Step 1 done. projectId=${res.projectId}`);
+      updateStepStatus("start", { status: "success", message: "Step 1 complete" });
+      return true;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      push(`Step 1 failed: ${message}`);
+      updateStepStatus("start", { status: "error", message });
+      return false;
+    } finally {
+      stopStep1Timer();
+      setIsBusy(false);
+    }
+  };
+
+  const handleDuplicateProject = async (event: FormEvent) => {
+    event.preventDefault();
+    if (isDuplicatingProject) return;
+    setDuplicateError(null);
+    setDuplicateNotice(null);
+
+    const sourceId = duplicateSourceId.trim();
+    const targetId = duplicateTargetId.trim();
+    if (!sourceId) {
+      setDuplicateError("Select a project to duplicate.");
+      return;
+    }
+    if (!targetId) {
+      setDuplicateError("Enter a new project name.");
+      return;
+    }
+    if (!SAFE_PROJECT_ID.test(targetId) || targetId.includes("..")) {
+      setDuplicateError("Project name can only include letters, numbers, dots, dashes, and underscores.");
+      return;
+    }
+    if (sourceId === targetId) {
+      setDuplicateError("New project name must be different from the source project.");
+      return;
+    }
+    if (existingProjects.some((project) => project.id === targetId)) {
+      setDuplicateError("That project name already exists. Pick a different name.");
+      return;
+    }
+
+    setIsDuplicatingProject(true);
+    try {
+      const payload = {
+        sourceProjectId: sourceId,
+        targetProjectId: targetId,
+        inputOverride: {
+          website: duplicateForm.website,
+          goal: duplicateForm.goal,
+          location: duplicateForm.location,
+          state_list: duplicateForm.state_list || undefined,
+          language: duplicateForm.language,
+          monthly_adspend_myr: duplicateForm.monthly_adspend_myr,
+          context: duplicateForm.context || undefined,
+        },
+      };
+      const res = await fetch("/api/sem/duplicate-project", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const json = (await res.json()) as { copied?: number; projectId?: string; error?: string };
+      if (!res.ok || json.error) {
+        const message = json.error ?? res.statusText;
+        throw new Error(message);
+      }
+      const copiedCount = typeof json.copied === "number" ? json.copied : 0;
+      setDuplicateNotice(`Duplicated ${sourceId} to ${targetId} (${copiedCount} files).`);
+      setIsDuplicateModalOpen(false);
+      hasUserSetProjectIdRef.current = true;
+      handleProjectIdChange(targetId);
+      applyStartFormState(duplicateForm);
+      await refreshProjectFiles(targetId);
+      void refreshExistingProjects();
+      setPendingDuplicateActions({
+        targetProjectId: targetId,
+        input: duplicateForm,
+        rerunStep1: rerunStep1AfterDuplicate,
+        rerunSteps2to9: rerunSteps2to9AfterDuplicate,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unable to duplicate project";
+      setDuplicateError(message);
+    } finally {
+      setIsDuplicatingProject(false);
+    }
   };
 
   const openFile = async (filename: string) => {
@@ -1086,24 +1304,26 @@ export default function SemPage() {
   const runStep = async (
     endpoint: string,
     label: string,
-    options?: { manageBusy?: boolean },
+    options?: { manageBusy?: boolean; force?: boolean },
   ): Promise<boolean> => {
     const manageBusy = options?.manageBusy ?? true;
+    let force = options?.force ?? false;
     if (!projectId) {
       push("Provide projectId first");
       return false;
     }
     // Step 3 pre-checks for resume / rerun
-    let force = false;
-    if (endpoint === "serp-expansion") {
-      const decision = await evaluateStep3(projectId);
-      if (!decision.allow) return false;
-      force = decision.force;
-    }
-    if (endpoint === "site-keywords") {
-      const decision = await evaluateStep4(projectId);
-      if (!decision.allow) return false;
-      force = decision.force;
+    if (!force) {
+      if (endpoint === "serp-expansion") {
+        const decision = await evaluateStep3(projectId);
+        if (!decision.allow) return false;
+        force = decision.force;
+      }
+      if (endpoint === "site-keywords") {
+        const decision = await evaluateStep4(projectId);
+        if (!decision.allow) return false;
+        force = decision.force;
+      }
     }
     if (manageBusy) setIsBusy(true);
     const isSerp = endpoint === "serp-expansion";
@@ -1178,11 +1398,12 @@ export default function SemPage() {
     return true;
   };
 
-  const runAllSteps = async () => {
+  const runAllSteps = async (options?: { force?: boolean }) => {
     if (!projectId) {
       push("Provide projectId first");
       return;
     }
+    const force = options?.force ?? false;
     resetRunPanels({ clearLogs: false });
     setIsBusy(true);
     const sequence: Array<{
@@ -1194,31 +1415,31 @@ export default function SemPage() {
       {
         key: "search",
         label: "Step 2 – Search Volume",
-        run: (options) => runStep("search-volume", "Step 2 – Search Volume", options),
+        run: (options) => runStep("search-volume", "Step 2 – Search Volume", { ...options, force }),
         isComplete: () => stepCompletion.search,
       },
       {
         key: "serp",
         label: "Step 3 – SERP Expansion",
-        run: (options) => runStep("serp-expansion", "Step 3 – SERP Expansion", options),
+        run: (options) => runStep("serp-expansion", "Step 3 – SERP Expansion", { ...options, force }),
         isComplete: () => stepCompletion.serp,
       },
       {
         key: "site",
         label: "Step 4 – Keywords for Site",
-        run: (options) => runStep("site-keywords", "Step 4 – Keywords for Site", options),
+        run: (options) => runStep("site-keywords", "Step 4 – Keywords for Site", { ...options, force }),
         isComplete: () => stepCompletion.site,
       },
       {
         key: "combine",
         label: "Step 5 – Combine & Dedupe",
-        run: (options) => runStep("combine", "Step 5 – Combine & Dedupe", options),
+        run: (options) => runStep("combine", "Step 5 – Combine & Dedupe", { ...options, force }),
         isComplete: () => stepCompletion.combine,
       },
       {
         key: "score",
         label: "Step 6 – Keyword Scoring",
-        run: (options) => runStep("keyword-scoring", "Step 6 – Keyword Scoring", options),
+        run: (options) => runStep("keyword-scoring", "Step 6 – Keyword Scoring", { ...options, force }),
         isComplete: () => stepCompletion.score,
       },
       {
@@ -1236,7 +1457,7 @@ export default function SemPage() {
       {
         key: "visualizer",
         label: "Step 9 – Visualize & QA",
-        run: (options) => runStep9Visualization(options),
+        run: (options) => runStep9Visualization({ ...options, force }),
         isComplete: () =>
           availableFiles.some((file) => file.startsWith("11-") && file.endsWith(".json")),
       },
@@ -1245,7 +1466,7 @@ export default function SemPage() {
     let completedAll = true;
     try {
       for (const step of sequence) {
-        if (step.isComplete()) {
+        if (!force && step.isComplete()) {
           push(`Skipping ${step.label} (already done)`);
           updateStepStatus(step.key, { status: "success", message: "Using existing output" });
           continue;
@@ -1272,6 +1493,23 @@ export default function SemPage() {
       setIsBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (!pendingDuplicateActions) return;
+    if (projectId !== pendingDuplicateActions.targetProjectId) return;
+    const { input, rerunStep1, rerunSteps2to9, targetProjectId } = pendingDuplicateActions;
+    setPendingDuplicateActions(null);
+    applyStartFormState(input);
+    const runActions = async () => {
+      if (rerunStep1) {
+        await runStartProject(targetProjectId, input);
+      }
+      if (rerunSteps2to9) {
+        await runAllSteps({ force: true });
+      }
+    };
+    void runActions();
+  }, [applyStartFormState, pendingDuplicateActions, projectId, runAllSteps, runStartProject]);
 
   const mapEndpointToKey = (endpoint: string): StepKey => {
     switch (endpoint) {
@@ -1730,6 +1968,23 @@ export default function SemPage() {
     setStartForm((prev) => ({ ...prev, monthly_adspend_myr: parsed }));
   };
 
+  const handleDuplicateAdSpendInputChange = (raw: string) => {
+    setDuplicateAdSpendInput(raw);
+    const parsed = parseAdSpendInput(raw);
+    if (parsed === null) return;
+    setDuplicateForm((prev) => ({ ...prev, monthly_adspend_myr: parsed }));
+  };
+
+  const handleDuplicateAdSpendBlur = () => {
+    const parsed = parseAdSpendInput(duplicateAdSpendInput);
+    if (parsed === null) {
+      setDuplicateAdSpendInput(formatAdSpend(duplicateForm.monthly_adspend_myr));
+      return;
+    }
+    setDuplicateAdSpendInput(formatAdSpend(parsed));
+    setDuplicateForm((prev) => ({ ...prev, monthly_adspend_myr: parsed }));
+  };
+
   const getSelectedCampaignFilters = (): AppliedCampaignFilters => {
     const tiers = (Object.entries(campaignFilters.tiers) as Array<[Tier, boolean]>)
       .filter(([, isOn]) => isOn)
@@ -2056,11 +2311,12 @@ export default function SemPage() {
     return trimmed;
   };
 
-  const runStep9Visualization = async (options?: { manageBusy?: boolean }) => {
+  const runStep9Visualization = async (options?: { manageBusy?: boolean; force?: boolean }) => {
     const manageBusy = options?.manageBusy ?? true;
+    const force = options?.force ?? false;
     if (!projectId) return false;
     const hasEnrichedPlan = availableFiles.some((file) => file.startsWith("11-") && file.endsWith(".json"));
-    if (hasEnrichedPlan) {
+    if (hasEnrichedPlan && !force) {
       const confirmReset = await askConfirm(
         "Re-run Step 9?",
         "An existing 11-*.json was found. Re-running Step 9 will overwrite it using the latest 10-*.json.",
@@ -2230,6 +2486,33 @@ export default function SemPage() {
                   Set a projectId to run steps and fetch files.
                 </div>
               )}
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              title="Duplicate Project"
+              isOpen={openSections.duplicate}
+              onToggle={() => toggleSection("duplicate")}
+              id="duplicate"
+            >
+              <div className="text-sm text-gray-700 dark:text-slate-200">
+                Duplicate an existing project (all files) and optionally adjust the Step 1 inputs before re-running any
+                steps.
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className={secondaryButton}
+                  onClick={openDuplicateModal}
+                  disabled={isDuplicatingProject || existingProjects.length === 0}
+                >
+                  Duplicate project
+                </button>
+                {existingProjects.length === 0 && (
+                  <span className="text-xs text-gray-500">No projects found yet.</span>
+                )}
+              </div>
+              {duplicateNotice && <div className="text-xs text-green-700">{duplicateNotice}</div>}
+              {duplicateError && <div className="text-xs text-red-700">{duplicateError}</div>}
             </CollapsibleSection>
 
             <CollapsibleSection
@@ -2431,7 +2714,7 @@ export default function SemPage() {
                   <button
                     className={primaryButton}
                     disabled={isBusy || !projectId}
-                    onClick={runAllSteps}
+                    onClick={() => void runAllSteps()}
                   >
                     {isBusy ? "Working..." : "Run All Steps (2-9)"}
                   </button>
@@ -3315,6 +3598,223 @@ export default function SemPage() {
                 </>
               )}
             </div>
+          </div>
+        </div>
+      )}
+      {isDuplicateModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto"
+          onClick={closeDuplicateModal}
+        >
+          <div
+            className="bg-white w-full max-w-3xl rounded shadow-lg overflow-hidden dark:bg-slate-900 max-h-[90vh] flex flex-col min-h-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <form onSubmit={handleDuplicateProject} className="flex flex-col flex-1 min-h-0">
+              <div className="border-b px-4 py-3 flex items-center justify-between dark:border-slate-700">
+                <div className="text-lg font-medium">Duplicate project</div>
+                <button type="button" className={iconButton} onClick={closeDuplicateModal} aria-label="Close">
+                  ×
+                </button>
+              </div>
+              <div className="px-4 py-4 space-y-4 overflow-y-auto flex-1 min-h-0">
+                <div className="grid gap-2">
+                  <div className="flex items-center justify-between text-sm text-gray-700 dark:text-slate-200">
+                    <span>Select a project to duplicate</span>
+                    <button
+                      type="button"
+                      className={secondaryButtonSm}
+                      onClick={() => void refreshExistingProjects()}
+                      disabled={isFetchingProjects}
+                    >
+                      {isFetchingProjects ? "Loading..." : "Refresh list"}
+                    </button>
+                  </div>
+                  <select
+                    className="border rounded px-3 py-2 text-sm w-full bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                    value={duplicateSourceId}
+                    onChange={(e) => void handleDuplicateSourceChange(e.target.value)}
+                    required
+                  >
+                    <option value="">Choose project</option>
+                    {existingProjects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.id} — {project.fileCount} {project.fileCount === 1 ? "file" : "files"} •{" "}
+                        {formatProjectTimestamp(project.createdMs)}
+                        {project.websiteDomain ? ` • ${project.websiteDomain}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <label className="grid gap-2">
+                  <span className="text-sm font-medium text-gray-700 dark:text-slate-200">New project name</span>
+                  <input
+                    className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                    value={duplicateTargetId}
+                    onChange={(e) => handleDuplicateTargetChange(e.target.value)}
+                    placeholder="projectId-Copy"
+                    required
+                  />
+                  <span className="text-xs text-gray-500">Letters, numbers, dashes, underscores, and dots only.</span>
+                </label>
+
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-4 dark:border-slate-700 dark:bg-slate-900/40">
+                  <div>
+                    <div className="text-sm font-semibold text-gray-800 dark:text-slate-100">
+                      Step 1 inputs (optional adjustments)
+                    </div>
+                    <div className="text-xs text-gray-500 dark:text-slate-400">
+                      Review and adjust the original inputs before duplicating.
+                    </div>
+                  </div>
+                  <label className="grid gap-2">
+                    <span className="text-sm font-medium text-gray-700 dark:text-slate-200">Website (required)</span>
+                    <input
+                      required
+                      className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                      value={duplicateForm.website}
+                      onChange={(e) => setDuplicateForm((prev) => ({ ...prev, website: e.target.value }))}
+                      placeholder="https://www.example.com"
+                    />
+                  </label>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <label className="grid gap-2">
+                      <span className="text-sm font-medium text-gray-700 dark:text-slate-200">Goal</span>
+                      <select
+                        className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                        value={duplicateForm.goal}
+                        onChange={(e) => setDuplicateForm((prev) => ({ ...prev, goal: e.target.value }))}
+                      >
+                        {GOAL_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="grid gap-2">
+                      <span className="text-sm font-medium text-gray-700 dark:text-slate-200">Location</span>
+                      <select
+                        className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                        value={duplicateUseCustomLocation ? OTHER_VALUE : duplicateForm.location}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          if (value === OTHER_VALUE) {
+                            setDuplicateUseCustomLocation(true);
+                          } else {
+                            setDuplicateUseCustomLocation(false);
+                            setDuplicateForm((prev) => ({ ...prev, location: value }));
+                          }
+                        }}
+                      >
+                        {LOCATION_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                        <option value={OTHER_VALUE}>Other</option>
+                      </select>
+                      {duplicateUseCustomLocation && (
+                        <input
+                          className="border rounded px-3 py-2 mt-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                          value={duplicateForm.location}
+                          onChange={(e) => setDuplicateForm((prev) => ({ ...prev, location: e.target.value }))}
+                          placeholder="Enter a location"
+                        />
+                      )}
+                    </label>
+                  </div>
+                  <label className="grid gap-2">
+                    <span className="text-sm font-medium text-gray-700 dark:text-slate-200">Language list</span>
+                    <input
+                      className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                      value={duplicateForm.language}
+                      onChange={(e) => setDuplicateForm((prev) => ({ ...prev, language: e.target.value }))}
+                      placeholder="English, Malay"
+                    />
+                  </label>
+                  <label className="grid gap-2">
+                    <span className="text-sm font-medium text-gray-700 dark:text-slate-200">
+                      State list (comma separated)
+                    </span>
+                    <input
+                      className="border rounded px-3 py-2 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                      value={duplicateForm.state_list}
+                      onChange={(e) => setDuplicateForm((prev) => ({ ...prev, state_list: e.target.value }))}
+                      placeholder="Selangor, Kuala Lumpur"
+                    />
+                  </label>
+                  <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-2 dark:border-slate-700 dark:bg-slate-800">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-gray-700 dark:text-slate-200">
+                        Monthly ad spend (MYR)
+                      </span>
+                      <span className="text-xs text-gray-500">Type any positive amount (commas ok)</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm text-gray-600">RM</span>
+                      <input
+                        type="text"
+                        className="border rounded px-3 py-2 w-40 bg-white dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                        value={duplicateAdSpendInput}
+                        onChange={(e) => handleDuplicateAdSpendInputChange(e.target.value)}
+                        onBlur={handleDuplicateAdSpendBlur}
+                        inputMode="text"
+                        pattern="[0-9,]*"
+                        placeholder="5,000"
+                      />
+                      <span className="text-sm text-gray-600">
+                        Selected: RM{duplicateForm.monthly_adspend_myr.toLocaleString("en-MY")}
+                      </span>
+                    </div>
+                  </div>
+                  <label className="grid gap-2">
+                    <span className="text-sm font-medium text-gray-700 dark:text-slate-200">Context (optional)</span>
+                    <textarea
+                      className="w-full border rounded-md px-3 py-2 text-sm bg-white shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-blue-400 dark:focus:ring-blue-900/50 min-h-[120px]"
+                      value={duplicateForm.context}
+                      onChange={(e) => setDuplicateForm((prev) => ({ ...prev, context: e.target.value }))}
+                      placeholder="Target audience, focus products, positioning, differentiators, etc."
+                    />
+                  </label>
+                  <div className="text-xs text-gray-500">
+                    These values will be saved to the new project&apos;s 00-user-input.json.
+                  </div>
+                </div>
+
+                <div className="grid gap-3 text-sm text-gray-700 dark:text-slate-200">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4"
+                      checked={rerunStep1AfterDuplicate}
+                      onChange={(e) => setRerunStep1AfterDuplicate(e.target.checked)}
+                    />
+                    <span>Re-run Step 1 content after duplication</span>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4"
+                      checked={rerunSteps2to9AfterDuplicate}
+                      onChange={(e) => setRerunSteps2to9AfterDuplicate(e.target.checked)}
+                    />
+                    <span>Re-run Steps 2-9 after duplication</span>
+                  </label>
+                </div>
+
+                {duplicateError && <div className="text-sm text-red-700">{duplicateError}</div>}
+              </div>
+              <div className="flex justify-end gap-3 px-4 py-3 border-t dark:border-slate-700">
+                <button type="button" className={secondaryButton} onClick={closeDuplicateModal}>
+                  Cancel
+                </button>
+                <button type="submit" className={primaryButton} disabled={isDuplicatingProject}>
+                  {isDuplicatingProject ? "Duplicating..." : "Duplicate project"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

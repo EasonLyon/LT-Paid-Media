@@ -457,3 +457,84 @@ export async function listProjectFileSummaries(projectId: string): Promise<Outpu
 export async function readProjectText(projectId: string, filename: string): Promise<string> {
   return readProjectFile(projectId, filename);
 }
+
+export async function duplicateOutputProject(
+  sourceProjectId: string,
+  targetProjectId: string,
+): Promise<{ copied: number }> {
+  assertSafeName(sourceProjectId, "project id");
+  assertSafeName(targetProjectId, "project id");
+  if (sourceProjectId === targetProjectId) {
+    throw new Error("Source and target project IDs must be different");
+  }
+
+  if (storageMode === "local") {
+    const sourceFolder = path.join(OUTPUT_ROOT, sourceProjectId);
+    const targetFolder = path.join(OUTPUT_ROOT, targetProjectId);
+    try {
+      await fs.access(sourceFolder);
+    } catch {
+      throw new Error("Source project does not exist");
+    }
+    try {
+      await fs.access(targetFolder);
+      throw new Error("Target project already exists");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw err;
+      }
+    }
+
+    const files = await listProjectFiles(sourceProjectId);
+    if (files.length === 0) {
+      throw new Error("Source project has no files to duplicate");
+    }
+    await fs.mkdir(targetFolder, { recursive: true });
+    await Promise.all(
+      files.map((file) =>
+        fs.copyFile(path.join(sourceFolder, file.name), path.join(targetFolder, file.name)),
+      ),
+    );
+    return { copied: files.length };
+  }
+
+  const sourceObjects = await listAllObjects(`${sourceProjectId}/`);
+  if (!sourceObjects.length) {
+    throw new Error("Source project has no files to duplicate");
+  }
+
+  const targetObjects = await listAllObjects(`${targetProjectId}/`);
+  if (targetObjects.length) {
+    throw new Error("Target project already exists");
+  }
+
+  const { client, bucket } = getR2Client();
+  let copied = 0;
+  for (const item of sourceObjects) {
+    const key = item.Key ?? "";
+    const parts = key.split("/");
+    if (parts.length < 2) continue;
+    const fileName = parts.slice(1).join("/");
+    if (!fileName || !SAFE_ENTRY_NAME.test(fileName)) continue;
+    const sourceKey = key;
+    const targetKey = `${targetProjectId}/${fileName}`;
+    const response = await client.send(
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: sourceKey,
+      }),
+    );
+    await client.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: targetKey,
+        Body: response.Body ?? "",
+      }),
+    );
+    copied += 1;
+  }
+  if (copied === 0) {
+    throw new Error("Source project has no files to duplicate");
+  }
+  return { copied };
+}
