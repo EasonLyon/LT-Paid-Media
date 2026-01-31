@@ -14,6 +14,10 @@
     - All required API keys and tokens are stored in a `.env` file at the project root.
     - Example (not exhaustive):
         - `OPENAI_API_KEY=<your-key>`
+        - `GOOGLE_ADS_DEVELOPER_TOKEN=<ads-dev-token>`
+        - `GOOGLE_OAUTH_CLIENT_ID=<oauth-client-id>`
+        - `GOOGLE_OAUTH_CLIENT_SECRET=<oauth-client-secret>`
+        - `TOKEN_ENCRYPTION_KEY=<32+ chars>`
 3. **Tech stack**
     - The project uses **Next.js** as the base framework.
     - Both **frontend and backend** must be written in **TypeScript**.

@@ -753,6 +753,13 @@ function CampaignVisualizerPageContent() {
   const [monthlySpendInput, setMonthlySpendInput] = useState<string>("");
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const [websiteUrl, setWebsiteUrl] = useState<string | null>(null);
+  const [googleAdsConnected, setGoogleAdsConnected] = useState(false);
+  const [googleAdsCustomerId, setGoogleAdsCustomerId] = useState("");
+  const [googleAdsLoginCustomerId, setGoogleAdsLoginCustomerId] = useState("");
+  const [googleAdsFinalUrl, setGoogleAdsFinalUrl] = useState("");
+  const [googleAdsStatusMessage, setGoogleAdsStatusMessage] = useState<string | null>(null);
+  const [isConnectingGoogleAds, setIsConnectingGoogleAds] = useState(false);
+  const [isPublishingGoogleAds, setIsPublishingGoogleAds] = useState(false);
 
   const sortedCampaignsByBudget = useMemo(
     () =>
@@ -829,10 +836,41 @@ function CampaignVisualizerPageContent() {
     void refreshExistingProjects();
   }, [refreshExistingProjects]);
 
+  const refreshGoogleAdsStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/sem/google-ads/status", { cache: "no-store" });
+      const json = (await res.json()) as { connected?: boolean };
+      setGoogleAdsConnected(Boolean(json.connected));
+    } catch {
+      setGoogleAdsConnected(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshGoogleAdsStatus();
+  }, [refreshGoogleAdsStatus]);
+
+  useEffect(() => {
+    const status = searchParams?.get("googleAds");
+    if (status === "connected") {
+      setGoogleAdsStatusMessage("Google Ads connected. Ready to publish.");
+      void refreshGoogleAdsStatus();
+    } else if (status === "error") {
+      setGoogleAdsStatusMessage("Google Ads connection failed. Please try again.");
+      void refreshGoogleAdsStatus();
+    }
+  }, [refreshGoogleAdsStatus, searchParams]);
+
   const entityValue = useMemo(() => {
     const trimmed = entityOverride.trim();
     return trimmed !== "" ? trimmed : projectIdInput;
   }, [entityOverride, projectIdInput]);
+
+  useEffect(() => {
+    if (!googleAdsFinalUrl && websiteUrl) {
+      setGoogleAdsFinalUrl(websiteUrl);
+    }
+  }, [googleAdsFinalUrl, websiteUrl]);
 
   const campaignTableRows = useMemo<CampaignTableRow[]>(() => {
     return campaigns.map((campaign, idx) => {
@@ -1360,6 +1398,94 @@ function CampaignVisualizerPageContent() {
       setStatusMessage(message);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleGoogleAdsConnect = async () => {
+    setIsConnectingGoogleAds(true);
+    setGoogleAdsStatusMessage(null);
+    try {
+      const returnTo = new URL("/sem/visualizer", window.location.origin);
+      if (projectIdInput) {
+        returnTo.searchParams.set("projectId", projectIdInput);
+      }
+      const params = new URLSearchParams({ returnTo: `${returnTo.pathname}${returnTo.search}` });
+      const res = await fetch(`/api/sem/google-ads/auth/start?${params.toString()}`, { cache: "no-store" });
+      const json = (await res.json()) as { authUrl?: string; error?: string };
+      if (!res.ok || !json.authUrl) {
+        throw new Error(json.error ?? res.statusText);
+      }
+      window.location.href = json.authUrl;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unable to connect Google Ads.";
+      setGoogleAdsStatusMessage(message);
+      setIsConnectingGoogleAds(false);
+    }
+  };
+
+  const handleGoogleAdsPublish = async () => {
+    if (!projectIdInput) {
+      setGoogleAdsStatusMessage("Provide a projectId before publishing.");
+      return;
+    }
+    if (!googleAdsCustomerId.trim()) {
+      setGoogleAdsStatusMessage("Enter a Google Ads customer ID.");
+      return;
+    }
+    if (!googleAdsFinalUrl.trim()) {
+      setGoogleAdsStatusMessage("Enter a final URL for ads.");
+      return;
+    }
+    if (!campaigns.length) {
+      setGoogleAdsStatusMessage("No campaigns loaded to publish.");
+      return;
+    }
+
+    setIsPublishingGoogleAds(true);
+    setGoogleAdsStatusMessage("Publishing to Google Ads…");
+    try {
+      const res = await fetch("/api/sem/google-ads/publish", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          projectId: projectIdInput,
+          campaigns,
+          customerId: googleAdsCustomerId,
+          loginCustomerId: googleAdsLoginCustomerId.trim() || undefined,
+          finalUrl: googleAdsFinalUrl,
+          fileName,
+        }),
+      });
+      const json = (await res.json()) as {
+        campaignsCreated?: number;
+        adGroupsCreated?: number;
+        adsCreated?: number;
+        keywordsCreated?: number;
+        negativeKeywordsCreated?: number;
+        warnings?: string[];
+        errors?: string[];
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(json.error ?? res.statusText);
+      }
+      const warnings = Array.isArray(json.warnings) ? json.warnings : [];
+      const errors = Array.isArray(json.errors) ? json.errors : [];
+      const summary = `Published ${json.campaignsCreated ?? 0} campaigns, ${json.adGroupsCreated ?? 0} ad groups.`;
+      const suffix = errors.length ? ` ${errors.length} errors.` : warnings.length ? ` ${warnings.length} warnings.` : "";
+      setGoogleAdsStatusMessage(`${summary}${suffix}`.trim());
+      if (warnings.length) {
+        console.warn("[GoogleAds] warnings", warnings);
+      }
+      if (errors.length) {
+        console.error("[GoogleAds] errors", errors);
+      }
+      void refreshGoogleAdsStatus();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Google Ads publish failed.";
+      setGoogleAdsStatusMessage(message);
+    } finally {
+      setIsPublishingGoogleAds(false);
     }
   };
 
@@ -2444,6 +2570,67 @@ function CampaignVisualizerPageContent() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
+            <div className="rounded-xl border border-default bg-surface p-4 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-900 dark:text-white">Google Ads publish</h3>
+                  <p className="text-sm text-muted">
+                    Connect an account, then publish campaigns in paused status while ad groups/ads stay active.
+                  </p>
+                </div>
+                <Badge variant={googleAdsConnected ? "success" : "outline"}>
+                  {googleAdsConnected ? "Connected" : "Not connected"}
+                </Badge>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted">Customer ID</label>
+                  <Input
+                    placeholder="123-456-7890"
+                    value={googleAdsCustomerId}
+                    onChange={(e) => setGoogleAdsCustomerId(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted">Login Customer ID (MCC, optional)</label>
+                  <Input
+                    placeholder="999-888-7777"
+                    value={googleAdsLoginCustomerId}
+                    onChange={(e) => setGoogleAdsLoginCustomerId(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1 md:col-span-2">
+                  <label className="text-xs font-medium text-muted">Final URL for ads</label>
+                  <Input
+                    placeholder="https://example.com/landing"
+                    value={googleAdsFinalUrl}
+                    onChange={(e) => setGoogleAdsFinalUrl(e.target.value)}
+                  />
+                </div>
+              </div>
+              {googleAdsStatusMessage && (
+                <Alert className="mt-4" variant="default">
+                  <AlertTitle>Status</AlertTitle>
+                  <AlertDescription>{googleAdsStatusMessage}</AlertDescription>
+                </Alert>
+              )}
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => void handleGoogleAdsConnect()}
+                  disabled={isConnectingGoogleAds}
+                >
+                  {googleAdsConnected ? "Reconnect Google Ads" : "Connect Google Ads"}
+                </Button>
+                <Button
+                  variant="success"
+                  onClick={() => void handleGoogleAdsPublish()}
+                  disabled={!googleAdsConnected || isPublishingGoogleAds}
+                >
+                  {isPublishingGoogleAds ? "Publishing..." : "Publish to Google Ads (Campaigns paused)"}
+                </Button>
+              </div>
+            </div>
             {campaigns.length === 0 && (
               <div className="text-sm text-muted">
                 Load a project with a 10/11 JSON first to see tables and exports.
