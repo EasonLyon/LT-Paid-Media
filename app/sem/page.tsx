@@ -920,6 +920,11 @@ export default function SemPage() {
     setDuplicateError(null);
   };
 
+  const updateStepStatus = (key: StepKey, status: StepStatus) => {
+    setStepStatuses((prev) => ({ ...prev, [key]: status }));
+  };
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const runStartProject = async (targetId: string, input: StartFormState) => {
     if (!targetId) {
       push("Provide projectId first");
@@ -1398,6 +1403,7 @@ export default function SemPage() {
     return true;
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const runAllSteps = async (options?: { force?: boolean }) => {
     if (!projectId) {
       push("Provide projectId first");
@@ -1532,10 +1538,6 @@ export default function SemPage() {
       default:
         return "start";
     }
-  };
-
-  const updateStepStatus = (key: StepKey, status: StepStatus) => {
-    setStepStatuses((prev) => ({ ...prev, [key]: status }));
   };
 
   const step1TimerRef = useRef<number | null>(null);

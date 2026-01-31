@@ -49,7 +49,7 @@ export async function GET(req: Request) {
     });
     response.cookies.set({ name: OAUTH_COOKIE, value: "", maxAge: 0, path: "/" });
     return response;
-  } catch (error: unknown) {
+  } catch {
     const failureUrl = new URL(returnTo, url.origin);
     failureUrl.searchParams.set("googleAds", "error");
     const response = NextResponse.redirect(failureUrl);

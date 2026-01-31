@@ -5,12 +5,6 @@
 - Domain logic is in `lib/`: SEM orchestration (`lib/sem/*`), external clients (`lib/dataforseo`, `lib/openai`), Supabase utilities (`lib/supabase/client.ts`), and project file helpers (`lib/storage/project-files.ts` writing to `output/<projectId>`).
 - Shared types sit in `types/`; global styles in `app/globals.css`; public assets in `public/`. Keep generated artifacts out of version control unless explicitly needed.
 
-## Build, Test, and Development Commands
-- `npm run dev` — start the Next.js dev server on port 3000.
-- `npm run lint` — run ESLint with the Next.js/TypeScript config; fix style issues before committing.
-- `npm run build` — production build; use before deploying to verify compilation.
-- `npm start` — run the built app locally (expects a prior `npm run build`).
-
 ## Coding Style & Naming Conventions
 - TypeScript is strict; prefer typed props, return types, and narrowing over `any`.
 - ESLint (see `eslint.config.mjs`) enforces Next.js + TypeScript rules; follow existing formatting (2-space indent, double quotes in TSX).

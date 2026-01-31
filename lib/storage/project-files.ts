@@ -10,10 +10,11 @@ import {
 } from "@aws-sdk/client-s3";
 import { Readable } from "stream";
 import { getR2Client, isR2Enabled } from "./r2";
+import { getSupabaseStorage, isSupabaseStorageEnabled } from "./supabase";
 
 const OUTPUT_ROOT = path.join(process.cwd(), "output");
 const SAFE_ENTRY_NAME = /^[a-zA-Z0-9._-]+$/;
-const storageMode: "r2" | "local" = isR2Enabled ? "r2" : "local";
+const storageMode: "supabase" | "r2" | "local" = isSupabaseStorageEnabled ? "supabase" : isR2Enabled ? "r2" : "local";
 
 export type OutputFileSummary = {
   name: string;
