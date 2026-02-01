@@ -30,6 +30,15 @@ export type OutputProjectSummary = {
   websiteDomain?: string | null;
 };
 
+type SupabaseFileObject = {
+  name: string;
+  id: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
+  last_accessed_at?: string | null;
+  metadata?: { size?: number } | null;
+};
+
 function assertSafeName(value: string, label: string) {
   if (!SAFE_ENTRY_NAME.test(value) || value.includes("..") || value.includes("/") || value.includes("\\")) {
     throw new Error(`Invalid ${label}`);
@@ -74,7 +83,41 @@ async function listAllObjects(prefix?: string): Promise<_Object[]> {
   return results;
 }
 
+async function listSupabaseObjects(prefix = ""): Promise<SupabaseFileObject[]> {
+  const { client, bucket } = getSupabaseStorage();
+  const results: SupabaseFileObject[] = [];
+  const limit = 1000;
+  let offset = 0;
+  while (true) {
+    const { data, error } = await client.storage.from(bucket).list(prefix, {
+      limit,
+      offset,
+      sortBy: { column: "name", order: "asc" },
+    });
+    if (error) {
+      throw new Error(`Unable to list supabase objects: ${error.message}`);
+    }
+    const batch = (data ?? []) as SupabaseFileObject[];
+    if (batch.length === 0) break;
+    results.push(...batch);
+    if (batch.length < limit) break;
+    offset += batch.length;
+  }
+  return results;
+}
+
+function inferContentTypeFromName(filename: string): string {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".json")) return "application/json; charset=utf-8";
+  if (lower.endsWith(".csv")) return "text/csv; charset=utf-8";
+  if (lower.endsWith(".txt")) return "text/plain; charset=utf-8";
+  return "application/octet-stream";
+}
+
 export async function ensureOutputRoot(): Promise<string> {
+  if (storageMode === "supabase") {
+    return getSupabaseStorage().bucket;
+  }
   if (storageMode === "local") {
     await fs.mkdir(OUTPUT_ROOT, { recursive: true });
     return OUTPUT_ROOT;
@@ -84,6 +127,9 @@ export async function ensureOutputRoot(): Promise<string> {
 
 export async function ensureProjectFolder(projectId: string): Promise<string> {
   assertSafeName(projectId, "project id");
+  if (storageMode === "supabase") {
+    return projectId;
+  }
   if (storageMode === "local") {
     const root = await ensureOutputRoot();
     const folder = path.join(root, projectId);
@@ -113,6 +159,17 @@ async function writeProjectFile(
     await fs.writeFile(fullPath, content, "utf8");
     return fullPath;
   }
+  if (storageMode === "supabase") {
+    const { client, bucket } = getSupabaseStorage();
+    const { error } = await client.storage.from(bucket).upload(target, Buffer.from(content), {
+      contentType: contentType ?? "text/plain; charset=utf-8",
+      upsert: true,
+    });
+    if (error) {
+      throw new Error(`Unable to write ${filename}: ${error.message}`);
+    }
+    return target;
+  }
   const { client, bucket } = getR2Client();
   await client.send(
     new PutObjectCommand({
@@ -129,6 +186,15 @@ async function readProjectFile(projectId: string, filename: string): Promise<str
   const target = projectFilePath(projectId, filename);
   if (storageMode === "local") {
     return fs.readFile(target, "utf8");
+  }
+  if (storageMode === "supabase") {
+    const { client, bucket } = getSupabaseStorage();
+    const { data, error } = await client.storage.from(bucket).download(target);
+    if (error || !data) {
+      throw new Error(`Unable to read ${filename}: ${error?.message ?? "Missing data"}`);
+    }
+    const buffer = Buffer.from(await data.arrayBuffer());
+    return buffer.toString("utf8");
   }
   const { client, bucket } = getR2Client();
   try {
@@ -200,6 +266,10 @@ export async function projectFileExists(projectId: string, filename: string): Pr
       return false;
     }
   }
+  if (storageMode === "supabase") {
+    const entries = await listSupabaseObjects(projectId);
+    return entries.some((entry) => entry.id && entry.name === filename);
+  }
   const { client, bucket } = getR2Client();
   try {
     await client.send(
@@ -229,6 +299,16 @@ async function listProjectFiles(projectId: string): Promise<OutputFileSummary[]>
         }),
     );
     return summaries;
+  }
+  if (storageMode === "supabase") {
+    const entries = await listSupabaseObjects(projectId);
+    return entries
+      .filter((entry) => entry.id && SAFE_ENTRY_NAME.test(entry.name))
+      .map((entry) => ({
+        name: entry.name,
+        size: entry.metadata?.size ?? 0,
+        modifiedMs: entry.updated_at ? new Date(entry.updated_at).getTime() : Date.now(),
+      }));
   }
 
   const objects = await listAllObjects(`${projectId}/`);
@@ -285,6 +365,36 @@ async function extractWebsiteDomain(projectId: string): Promise<string | null> {
 }
 
 export async function listOutputProjects(): Promise<OutputProjectSummary[]> {
+  if (storageMode === "supabase") {
+    const rootEntries = await listSupabaseObjects("");
+    const projectIds = Array.from(
+      new Set(rootEntries.map((entry) => entry.name).filter((name) => SAFE_ENTRY_NAME.test(name))),
+    );
+
+    const projects = await Promise.all(
+      projectIds.map(async (projectId) => {
+        const files = await listProjectFiles(projectId);
+        if (files.length === 0) return null;
+        const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+        const createdMs = files.reduce((min, file) => Math.min(min, file.modifiedMs), Number.POSITIVE_INFINITY);
+        const websiteDomain = await extractWebsiteDomain(projectId);
+        return {
+          id: projectId,
+          files: files.sort((a, b) => a.name.localeCompare(b.name)),
+          totalSize,
+          createdMs: createdMs === Number.POSITIVE_INFINITY ? Date.now() : createdMs,
+          websiteDomain,
+        };
+      }),
+    );
+
+    return projects
+      .filter((entry): entry is OutputProjectSummary => Boolean(entry))
+      .sort((a, b) => {
+        if (a.createdMs !== b.createdMs) return b.createdMs - a.createdMs;
+        return b.id.localeCompare(a.id);
+      });
+  }
   if (storageMode === "local") {
     const root = await ensureOutputRoot();
     const entries = await fs.readdir(root, { withFileTypes: true });
@@ -381,6 +491,16 @@ export async function deleteOutputFile(projectId: string, filename: string): Pro
       throw err;
     }
   }
+  if (storageMode === "supabase") {
+    const exists = await projectFileExists(projectId, filename);
+    if (!exists) return false;
+    const { client, bucket } = getSupabaseStorage();
+    const { error } = await client.storage.from(bucket).remove([target]);
+    if (error) {
+      throw new Error(`Unable to delete ${filename}: ${error.message}`);
+    }
+    return true;
+  }
 
   const { client, bucket } = getR2Client();
   try {
@@ -398,6 +518,17 @@ export async function deleteOutputFile(projectId: string, filename: string): Pro
 
 export async function deleteOutputProject(projectId: string): Promise<boolean> {
   assertSafeName(projectId, "project id");
+  if (storageMode === "supabase") {
+    const files = await listProjectFiles(projectId);
+    if (!files.length) return false;
+    const paths = files.map((file) => objectKey(projectId, file.name));
+    const { client, bucket } = getSupabaseStorage();
+    const { error } = await client.storage.from(bucket).remove(paths);
+    if (error) {
+      throw new Error(`Unable to delete project ${projectId}: ${error.message}`);
+    }
+    return true;
+  }
   if (storageMode === "local") {
     const folder = path.join(OUTPUT_ROOT, projectId);
     try {
@@ -469,6 +600,37 @@ export async function duplicateOutputProject(
     throw new Error("Source and target project IDs must be different");
   }
 
+  if (storageMode === "supabase") {
+    const sourceFiles = await listProjectFiles(sourceProjectId);
+    if (!sourceFiles.length) {
+      throw new Error("Source project has no files to duplicate");
+    }
+    const targetFiles = await listProjectFiles(targetProjectId);
+    if (targetFiles.length) {
+      throw new Error("Target project already exists");
+    }
+
+    const { client, bucket } = getSupabaseStorage();
+    let copied = 0;
+    for (const file of sourceFiles) {
+      const sourceKey = objectKey(sourceProjectId, file.name);
+      const targetKey = objectKey(targetProjectId, file.name);
+      const { data, error } = await client.storage.from(bucket).download(sourceKey);
+      if (error || !data) {
+        throw new Error(`Unable to read ${file.name}: ${error?.message ?? "Missing data"}`);
+      }
+      const buffer = Buffer.from(await data.arrayBuffer());
+      const { error: uploadError } = await client.storage.from(bucket).upload(targetKey, buffer, {
+        contentType: inferContentTypeFromName(file.name),
+        upsert: false,
+      });
+      if (uploadError) {
+        throw new Error(`Unable to copy ${file.name}: ${uploadError.message}`);
+      }
+      copied += 1;
+    }
+    return { copied };
+  }
   if (storageMode === "local") {
     const sourceFolder = path.join(OUTPUT_ROOT, sourceProjectId);
     const targetFolder = path.join(OUTPUT_ROOT, targetProjectId);
@@ -538,4 +700,44 @@ export async function duplicateOutputProject(
     throw new Error("Source project has no files to duplicate");
   }
   return { copied };
+}
+
+export async function syncProjectToR2(projectId: string): Promise<{ copied: number; skipped: number }> {
+  assertSafeName(projectId, "project id");
+  if (!isSupabaseStorageEnabled) {
+    throw new Error("Supabase storage is not configured");
+  }
+  if (!isR2Enabled) {
+    throw new Error("R2 storage is not configured");
+  }
+
+  const supabaseFiles = await listSupabaseObjects(projectId);
+  const files = supabaseFiles.filter((entry) => entry.id && SAFE_ENTRY_NAME.test(entry.name));
+  if (files.length === 0) {
+    throw new Error("Supabase project has no files to sync");
+  }
+
+  const { client: supabaseClient, bucket: supabaseBucket } = getSupabaseStorage();
+  const { client: r2Client, bucket: r2Bucket } = getR2Client();
+  let copied = 0;
+
+  for (const file of files) {
+    const key = objectKey(projectId, file.name);
+    const { data, error } = await supabaseClient.storage.from(supabaseBucket).download(key);
+    if (error || !data) {
+      throw new Error(`Unable to read ${file.name}: ${error?.message ?? "Missing data"}`);
+    }
+    const buffer = Buffer.from(await data.arrayBuffer());
+    await r2Client.send(
+      new PutObjectCommand({
+        Bucket: r2Bucket,
+        Key: key,
+        Body: buffer,
+        ContentType: inferContentTypeFromName(file.name),
+      }),
+    );
+    copied += 1;
+  }
+
+  return { copied, skipped: 0 };
 }

@@ -11,11 +11,17 @@ type DeletingTarget =
   | { projectId: string; filename?: undefined; bulk: true }
   | null;
 
+type BackupStatus = {
+  status: "idle" | "running" | "success" | "error";
+  message?: string;
+};
+
 export default function OutputManagerPage() {
   const [projects, setProjects] = useState<OutputProjectSummary[]>([]);
   const [fetchState, setFetchState] = useState<FetchState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<DeletingTarget>(null);
+  const [backupStatus, setBackupStatus] = useState<Record<string, BackupStatus>>({});
   const [selected, setSelected] = useState<Record<string, string[]>>({});
   const [searchQuery, setSearchQuery] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -149,6 +155,28 @@ export default function OutputManagerPage() {
     }
   };
 
+  const handleBackupProject = async (projectId: string) => {
+    const confirm = window.confirm(`Sync ${projectId} to R2 as a backup?`);
+    if (!confirm) return;
+    setBackupStatus((prev) => ({ ...prev, [projectId]: { status: "running" } }));
+    try {
+      const res = await fetch(`/api/storage/backup-to-r2?projectId=${encodeURIComponent(projectId)}`, { method: "POST" });
+      const json = (await res.json()) as { copied?: number; skipped?: number; error?: string };
+      if (!res.ok || json.error) {
+        throw new Error(json.error ?? res.statusText);
+      }
+      const copied = typeof json.copied === "number" ? json.copied : 0;
+      const skipped = typeof json.skipped === "number" ? json.skipped : 0;
+      setBackupStatus((prev) => ({
+        ...prev,
+        [projectId]: { status: "success", message: `Backed up ${copied} file${copied === 1 ? "" : "s"}${skipped ? `, skipped ${skipped}` : ""}.` },
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to sync backup";
+      setBackupStatus((prev) => ({ ...prev, [projectId]: { status: "error", message } }));
+    }
+  };
+
   const toggleFile = (projectId: string, filename: string) => {
     setSelected((prev) => {
       const current = new Set(prev[projectId] ?? []);
@@ -227,8 +255,8 @@ export default function OutputManagerPage() {
             </div>
           </div>
           <p className="max-w-2xl text-base text-slate-600">
-            Browse generated project folders under <code className="font-mono">/output</code>. Delete individual files or remove entire
-            projects to keep your Vercel storage lean.
+            Browse generated project files stored in Supabase (with optional R2 backup). Delete individual files or remove entire
+            projects to keep storage tidy.
           </p>
           <div className="w-full max-w-md">
             <label className="block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Search project</label>
@@ -268,6 +296,7 @@ export default function OutputManagerPage() {
                 const isExpanded = expanded[project.id] ?? false;
                 const visibleFiles = isExpanded ? project.files : project.files.slice(0, 1);
                 const allSelected = project.files.length > 0 && project.files.every((file) => (selected[project.id] ?? []).includes(file.name));
+                const backup = backupStatus[project.id];
 
                 return (
                 <div key={project.id} className="p-6">
@@ -288,6 +317,13 @@ export default function OutputManagerPage() {
                         </button>
                       )}
                       <button
+                        onClick={() => void handleBackupProject(project.id)}
+                        className="self-start rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-medium text-sky-700 transition hover:-translate-y-0.5 hover:bg-white disabled:opacity-60"
+                        disabled={backup?.status === "running" || !!deleting}
+                      >
+                        {backup?.status === "running" ? "Backing up…" : "Backup to R2"}
+                      </button>
+                      <button
                         onClick={() => void handleDeleteSelected(project.id)}
                         className="self-start rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 transition hover:-translate-y-0.5 hover:bg-white disabled:opacity-60"
                         disabled={(selected[project.id]?.length ?? 0) === 0 || !!deleting}
@@ -305,6 +341,11 @@ export default function OutputManagerPage() {
                       </button>
                     </div>
                   </div>
+                  {backup?.message && (
+                    <p className={`text-xs ${backup.status === "error" ? "text-red-600" : "text-emerald-600"}`}>
+                      {backup.message}
+                    </p>
+                  )}
                   {project.files.length > 0 ? (
                     <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
                       <table className="min-w-full divide-y divide-slate-200 text-sm">
